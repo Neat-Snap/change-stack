@@ -49,7 +49,7 @@ export async function fetchReview(target: ReviewTarget, host: HostConfig): Promi
     const current = await get<any>(path);
     if (current.diff_refs?.head_sha !== mr.diff_refs.head_sha || current.diff_refs?.base_sha !== mr.diff_refs.base_sha || current.diff_refs?.start_sha !== mr.diff_refs.start_sha) throw new Error('The merge request changed while loading. Run the command again for a consistent snapshot.');
     return { target, title: mr.title, description: mr.description ?? '', author: mr.author?.username ?? 'Unknown',
-      sourceBranch: mr.source_branch, targetBranch: mr.target_branch, headSha: mr.diff_refs.head_sha, repository: String(mr.source_project_id ?? project), files, warnings };
+      sourceBranch: mr.source_branch, targetBranch: mr.target_branch, headSha: mr.diff_refs.head_sha, baseSha: mr.diff_refs.base_sha, baseRepository: String(mr.target_project_id ?? project), repository: String(mr.source_project_id ?? project), files, warnings };
   }
   const projectPath = target.project.split('/').map(encodeURIComponent).join('/');
   const path = `/repos/${projectPath}/pulls/${target.number}`;
@@ -65,8 +65,13 @@ export async function fetchReview(target: ReviewTarget, host: HostConfig): Promi
     if (changes.length < 100) break;
   }
   if (pr.changed_files > files.length) warnings.push('GitHub returned only part of this review (its files API is capped at 3,000 files).');
+  let diffBaseSha: string | undefined;
+  try {
+    const comparison = await get<any>(`/repos/${projectPath}/compare/${encodeURIComponent(pr.base.sha)}...${encodeURIComponent(pr.head.sha)}?per_page=1`);
+    diffBaseSha = comparison.merge_base_commit?.sha;
+  } catch { /* The review remains readable when base-content lookup is unavailable. */ }
   const current = await get<any>(path);
   if (current.head.sha !== pr.head.sha || current.base.sha !== pr.base.sha) throw new Error('The pull request changed while loading. Run the command again for a consistent snapshot.');
   return { target, title: pr.title, description: pr.body ?? '', author: pr.user.login,
-    sourceBranch: pr.head.ref, targetBranch: pr.base.ref, headSha: pr.head.sha, repository: pr.head.repo?.full_name ?? target.project, files, warnings };
+    sourceBranch: pr.head.ref, targetBranch: pr.base.ref, headSha: pr.head.sha, baseSha: diffBaseSha, baseRepository: pr.base.repo?.full_name ?? target.project, repository: pr.head.repo?.full_name ?? target.project, files, warnings };
 }

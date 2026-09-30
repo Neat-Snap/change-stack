@@ -42,9 +42,12 @@ export interface Review {
   targetBranch: string;
   headSha: string;
   repository?: string;
+  baseSha?: string;
+  baseRepository?: string;
   files: ChangedFile[];
   warnings: string[];
 }
-export interface Layer { id: string; title: string; summary: string; files: string[]; questions: string[] }
+export interface ChangeRange { changeId: string; start: number; end: number }
+export interface Layer { ranges?: ChangeRange[]; id: string; title: string; summary: string; files: string[]; questions: string[] }
 export interface Analysis { summary: string; layers: Layer[]; source: 'model' | 'local'; warnings: string[] }
 export interface Session { review: Review; analysis: Analysis; aiEnabled: boolean; demo: boolean }

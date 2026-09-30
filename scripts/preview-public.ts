@@ -1,3 +1,4 @@
+import { reviewTools } from '../src/core/review-tools';
 import { fetchReview } from '../src/core/providers';
 import { repositoryReader } from '../src/core/repository';
 import { parseTarget } from '../src/core/target';
@@ -18,7 +19,7 @@ const analysis = ai ? await analyze(review, ai, repositoryReader(review, { provi
 if (ai && analysis.source !== 'model') throw new Error(`Model preparation failed: ${analysis.warnings.join(' ')}`);
 const { server, url } = startServer({ review, analysis, aiEnabled: !!ai, demo: false }, ai,
   Number(process.env.CHANGE_STACK_PREVIEW_PORT ?? '4317'), process.env.CHANGE_STACK_PUBLIC_ORIGIN,
-  process.env.CHANGE_STACK_PREVIEW_HOST ?? '127.0.0.1');
+  process.env.CHANGE_STACK_PREVIEW_HOST ?? '127.0.0.1', reviewTools(review, { provider: target.provider, baseUrl: target.origin, token }));
 console.log(`Review ready: ${url}`);
 console.log(`${review.title} · ${review.files.length} files · ${analysis.layers.length} layers · ${ai ? 'Model-generated, requested tier verified' : 'AI disabled'}`);
 for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => { server.stop(true); process.exit(0); });

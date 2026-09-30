@@ -6,7 +6,8 @@ import { configPath, loadConfig, promptPath, saveConfig } from '../src/core/conf
 import { gitApiBase, parseTarget, tokenCreationUrl } from '../src/core/target';
 import { serviceFetch } from '../src/core/network';
 import { fetchReview, makePatch } from '../src/core/providers';
-import { analyze, complete, summarizeRepository, validateLayers } from '../src/core/analysis';
+import { analyze, complete, summarizeRepository, validateRangeLayers } from '../src/core/analysis';
+import { changeUnits } from '../src/core/changes';
 import { repositoryReader } from '../src/core/repository';
 import { demoSession } from '../src/core/demo';
 import { startServer } from '../src/server';
@@ -74,10 +75,12 @@ describe('Git providers', () => {
   test('normalizes GitHub renames and detects API file limits', async () => {
     const origin = mock(request => {
       expect(request.headers.get('authorization')).toBe('Bearer github-token');
+      if (new URL(request.url).pathname.includes('/compare/')) return Response.json({ merge_base_commit: { sha: 'merge-base' } });
       return new URL(request.url).pathname.endsWith('/files') ? Response.json([{ filename: 'new.ts', previous_filename: 'old.ts', status: 'renamed', additions: 1, deletions: 1, patch: '@@ -1 +1 @@\n-old\n+new\n' }])
         : Response.json({ title: 'Rename', body: '', user: { login: 'dev' }, head: { sha: 'abc', ref: 'feature' }, base: { sha: 'base', ref: 'main' }, changed_files: 2 });
     });
     const review = await fetchReview(parseTarget(`${origin}/owner/repo/pull/2`), { provider: 'github', baseUrl: origin, token: 'github-token' });
+    expect(review.baseSha).toBe('merge-base'); expect(review.baseRepository).toBe('owner/repo');
     expect(review.files[0]!.status).toBe('renamed'); expect(review.files[0]!.patch).toContain('a/old.ts'); expect(review.warnings).toHaveLength(1);
   });
   test('refuses a diff whose head changed while fetching', async () => {
@@ -102,9 +105,10 @@ describe('Grounded model output and local sessions', () => {
     const origin = mock(() => Response.json({ service_tier: 'default', choices: [{ message: { content: 'Do not accept this' } }] }));
     await expect(complete({ baseUrl: `${origin}/v1`, model: 'gpt-6-luna', apiKey: 'test', reasoningEffort: 'high', serviceTier: 'flex' }, 'Explain the supplied patch')).rejects.toThrow('did not confirm');
   });
-  test('rejects invented file references and preserves unassigned files', () => {
-    expect(() => validateLayers({ summary: 'test', layers: [{ title: 'test', summary: 'test', files: ['invented.ts'], questions: [] }] }, ['real.ts'], 'test')).toThrow();
-    expect(validateLayers({ summary: 'test', layers: [] }, ['real.ts'], 'test').layers[0]!.files).toEqual(['real.ts']);
+  test('rejects invented source ranges and preserves unassigned changes', () => {
+    const units = changeUnits(demoSession().review.files[0]);
+    expect(() => validateRangeLayers({ summary: 'test', layers: [{ title: 'test', summary: 'test', ranges: [{ changeId: 'invented', start: 1, end: 1 }], questions: [] }] }, units, 'test')).toThrow();
+    expect(validateRangeLayers({ summary: 'test', layers: [] }, units, 'test').layers[0].files).toEqual([units[0].path]);
   });
   test('calls only the configured model and falls back when it returns bad JSON', async () => {
     let calls = 0;

@@ -1,13 +1,15 @@
+import type { ReviewTools } from './core/review-tools';
 import page from './web/index.html';
 import { ask } from './core/analysis';
 import type { AIConfig, Session } from './core/types';
 import { serviceUrl } from './core/target';
 
-export function startServer(session: Session, ai?: AIConfig, port = 0, publicOrigin?: string, hostname = '127.0.0.1') {
+export function startServer(session: Session, ai?: AIConfig, port = 0, publicOrigin?: string, hostname = '127.0.0.1', tools?: ReviewTools) {
   const publicUrl = publicOrigin ? serviceUrl(publicOrigin) : undefined;
   if (publicUrl && publicUrl.pathname !== '/') throw new Error('The public URL must be an origin without a path.');
   const secret = crypto.randomUUID() + crypto.randomUUID();
   let chatBusy = false;
+  let reads = 0;
   const server = Bun.serve({
     hostname, port, development: false, maxRequestBodySize: 32_768,
     routes: { '/': page },
@@ -28,6 +30,20 @@ export function startServer(session: Session, ai?: AIConfig, port = 0, publicOri
       const cookie = request.headers.get('cookie')?.split(';').map(v => v.trim()).find(v => v.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
       if (cookie !== secret) return json({ error: 'Open the URL printed by your CLI to access this session.' }, 401);
       if (url.pathname === '/api/review' && request.method === 'GET') return json(session);
+      if (url.pathname === '/api/context' || url.pathname === '/api/symbol') {
+        if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405);
+        if (!tools) return json({ error: 'Repository lookup is unavailable for this review.' }, 400);
+        if (reads >= 2) return json({ error: 'A repository lookup is already running. Try again shortly.' }, 429);
+        reads++;
+        try {
+          const body = await request.json() as any;
+          if (typeof body.path !== 'string' || !session.review.files.some(f => f.path === body.path)) return json({ error: 'Unknown changed file.' }, 400);
+          if (url.pathname === '/api/context') return json(await tools.context(body.path));
+          if (typeof body.symbol !== 'string' || !/^[A-Za-z_$][\w$]{1,79}$/.test(body.symbol)) return json({ error: 'Choose a symbol name.' }, 400);
+          return json(await tools.lookup(body.symbol, body.path));
+        } catch { return json({ error: 'Repository content is unavailable or exceeds the read budget.' }, 422); }
+        finally { reads--; }
+      }
       if (url.pathname === '/api/ask' && request.method === 'POST') {
         if (!ai) return json({ error: 'AI is not configured for this session.' }, 400);
         if (chatBusy) return json({ error: 'A question is already being processed.' }, 429);

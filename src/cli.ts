@@ -5,6 +5,7 @@ import { configPath, loadConfig, promptPath, saveConfig } from './core/config';
 import { parseTarget, serviceUrl, tokenCreationUrl } from './core/target';
 import { fetchReview, validateHost } from './core/providers';
 import { analyze, localAnalysis } from './core/analysis';
+import { reviewTools, type ReviewTools } from './core/review-tools';
 import { repositoryReader } from './core/repository';
 import { readFile } from 'node:fs/promises';
 import { demoSession } from './core/demo';
@@ -105,6 +106,7 @@ async function main() {
   p.intro('Change Stack · Local review');
   let session;
   let ai: AIConfig | undefined;
+  let tools: ReviewTools | undefined;
   if (values.demo) session = demoSession();
   else {
     let url = positionals[0];
@@ -138,9 +140,10 @@ async function main() {
       try { analysis = await analyze(review, ai, repositoryReader(review, host)); spinner.stop('Review layers prepared'); }
       catch (e) { spinner.stop('Review preparation failed'); throw e; }
     }
+    tools = reviewTools(review, host);
     session = { review, analysis, aiEnabled: !!ai, demo: false };
   }
-  const { server, url } = startServer(session, ai, port);
+  const { server, url } = startServer(session, ai, port, undefined, '127.0.0.1', tools);
   p.outro(`Review ready: ${url}\nKeep this terminal running. Press Ctrl+C to close the review.`);
   if (!values['no-open']) void openBrowser(url);
   for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => { server.stop(true); process.exit(0); });

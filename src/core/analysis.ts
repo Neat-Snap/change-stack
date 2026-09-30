@@ -1,10 +1,10 @@
+import { changeUnits, wholeRanges, type ChangeUnit } from './changes';
 import { serviceJson } from './network';
 import { serviceUrl } from './target';
 import type { RepositoryReader, RepositoryRequest } from './repository';
 import type { AIConfig, Analysis, Layer, Review } from './types';
 
 const MAX_CONTEXT = 48_000;
-const MAX_FILES = 8;
 export const DEFAULT_SYSTEM_PROMPT = `Help a teammate understand a code change. Use simple, everyday language and short sentences. Explain what changed, why it matters, and what the reviewer should check. Avoid jargon, formal phrasing, and implementation details unless they are needed to understand the change. Explain only what the evidence supports. Clearly say when context is missing. Never claim a change is safe to merge.`;
 
 export function systemPrompt(ai: AIConfig): string {
@@ -20,25 +20,46 @@ export function localAnalysis(review: Review): Analysis {
     groups.set(group, [...(groups.get(group) ?? []), file.path]);
   }
   return { source: 'local', summary: review.description || 'Explore the changed files below. Configure your internal model to generate explanations.',
-    warnings: [], layers: [...groups].map(([title, files], i) => ({ id: `local-${i}`, title, files,
+    warnings: [], layers: [...groups].map(([title, files], i) => ({ id: `local-${i}`, title, files, ranges: wholeRanges(review.files.filter(f => files.includes(f.path))),
       summary: `${files.length} changed file${files.length === 1 ? '' : 's'}. Grouped by path; this is not an AI interpretation.`, questions: [] })) };
 }
 
-export function validateLayers(value: unknown, allowed: string[], idPrefix: string): { summary: string; layers: Layer[] } {
+export function validateRangeLayers(value: unknown, units: ChangeUnit[], idPrefix: string): { summary: string; layers: Layer[] } {
   const result = value as any;
-  if (!result || typeof result.summary !== 'string' || !Array.isArray(result.layers) || result.layers.length > 50) throw new Error('The model returned an invalid review structure.');
-  const seen = new Set<string>();
-  const layers = result.layers.map((layer: any, i: number) => {
-    if (typeof layer.title !== 'string' || typeof layer.summary !== 'string' || !Array.isArray(layer.files) || !Array.isArray(layer.questions)
-      || layer.files.some((p: unknown) => typeof p !== 'string' || !allowed.includes(p))
-      || layer.questions.some((q: unknown) => typeof q !== 'string')) throw new Error('The model returned unsupported file references or malformed layers.');
-    const files = layer.files.filter((p: string) => { if (seen.has(p)) return false; seen.add(p); return true; });
-    return { id: `${idPrefix}-${i}`, title: layer.title.slice(0, 200), summary: layer.summary.slice(0, 8_000), files,
-      questions: layer.questions.slice(0, 10).map((q: string) => q.slice(0, 2_000)) };
-  }).filter((l: Layer) => l.files.length);
-  const missing = allowed.filter(p => !seen.has(p));
-  if (missing.length) layers.push({ id: `${idPrefix}-remaining`, title: 'Additional changes', summary: 'These files were not assigned a layer by the model.', files: missing, questions: [] });
-  return { summary: result.summary.slice(0, 8_000), layers };
+  if (!result || typeof result.summary !== 'string' || !Array.isArray(result.layers) || result.layers.length > 50) throw new Error('Invalid layer structure.');
+  const allowed = new Map(units.map(u => [u.id, u]));
+  const seen = new Map<string, Set<number>>();
+  const layers: Layer[] = result.layers.map((layer: any, index: number) => {
+    if (typeof layer.title !== 'string' || typeof layer.summary !== 'string' || !Array.isArray(layer.ranges) || layer.ranges.length > 2000
+      || !Array.isArray(layer.questions) || layer.questions.some((q: unknown) => typeof q !== 'string')) throw new Error('Invalid layer.');
+    for (const range of layer.ranges) {
+      const unit = allowed.get(range?.changeId);
+      if (!unit || !Number.isInteger(range.start) || !Number.isInteger(range.end) || range.start < 1 || range.end < range.start || range.end > unit.lines.length) throw new Error('Invalid source range.');
+      const rows = seen.get(unit.id) ?? new Set<number>();
+      for (let i = range.start; i <= range.end; i++) {
+        if (rows.has(i)) throw new Error('Overlapping source ranges.');
+        rows.add(i);
+      }
+      seen.set(unit.id, rows);
+    }
+    return { id: `${idPrefix}-${index}`, title: layer.title.slice(0, 200), summary: layer.summary.slice(0, 8000),
+      ranges: layer.ranges.map((r: any) => ({ changeId: r.changeId, start: r.start, end: r.end })),
+      files: [...new Set<string>(layer.ranges.map((r: any) => allowed.get(r.changeId)!.path))],
+      questions: layer.questions.slice(0, 10).map((q: string) => q.slice(0, 2000)) };
+  }).filter((l: Layer) => l.ranges!.length);
+  const missing = units.flatMap(u => {
+    const ranges = [];
+    for (let i = 1; i <= u.lines.length; i++) {
+      if (seen.get(u.id)?.has(i)) continue;
+      const start = i;
+      while (i < u.lines.length && !seen.get(u.id)?.has(i + 1)) i++;
+      ranges.push({ changeId: u.id, start, end: i });
+    }
+    return ranges;
+  });
+  if (missing.length) layers.push({ id: `${idPrefix}-remaining`, title: 'Additional changes', summary: 'These changes were not assigned by the model.',
+    ranges: missing, files: [...new Set(missing.map(r => allowed.get(r.changeId)!.path))], questions: [] });
+  return { summary: result.summary.slice(0, 8000), layers };
 }
 
 function bounded(value: number | undefined, fallback: number, min: number, max: number): number {
@@ -73,31 +94,40 @@ export async function complete(ai: AIConfig, user: string, json = false): Promis
 
 export async function analyze(review: Review, ai: AIConfig, repository?: RepositoryReader): Promise<Analysis> {
   const contextLimit = bounded(ai.maxContextChars, MAX_CONTEXT, 8_000, 200_000);
-  const batches: Review['files'][] = [];
-  let batch: Review['files'] = [], size = 0;
-  for (const file of review.files) {
-    const length = Math.min(file.patch.length, contextLimit - 4_000) + file.path.length + 100;
-    if (batch.length && (size + length > contextLimit || batch.length >= MAX_FILES)) { batches.push(batch); batch = []; size = 0; }
-    batch.push(file); size += length;
+  const batches: ChangeUnit[][] = [];
+  let batch: ChangeUnit[] = [], size = 0;
+  // Reserve room for instructions/metadata and never cut a JSON document mid-way.
+  const unitLimit = Math.max(1000, contextLimit - 5000);
+  const allUnits = review.files.flatMap(changeUnits);
+  const evidence = (u: ChangeUnit) => ({ changeId: u.id, path: u.path, oldStart: u.oldStart, newStart: u.newStart, context: u.context,
+    lines: u.lines.map((text, index) => `${index + 1}: ${text.slice(0, 2000)}`) });
+  for (const unit of allUnits) {
+    const length = JSON.stringify(evidence(unit)).length;
+    if (batch.length && (size + length > unitLimit || batch.length >= 80)) { batches.push(batch); batch = []; size = 0; }
+    batch.push(unit); size += length;
   }
   if (batch.length) batches.push(batch);
   const warnings: string[] = [];
+  if (allUnits.some(u => u.lines.some(line => line.length > 2000))) warnings.push('Very long lines were shortened in model input. Full lines remain available in the diff.');
   const summaries: string[] = [], layers: Layer[] = [];
-  for (const [index, files] of batches.entries()) {
-    const context = files.map(f => ({ path: f.path, status: f.status, patch: f.patch.slice(0, contextLimit - 4_000),
-      incomplete: f.incomplete || f.patch.length > contextLimit - 4_000 }));
-    if (context.some(f => f.incomplete)) warnings.push(`Batch ${index + 1} includes missing or shortened patches. Explanations have limited context.`);
-    const prompt = `Organize these changes into ordered logical review layers. Return ONLY JSON: {"summary":"...","layers":[{"title":"...","summary":"...","files":["exact/path"],"questions":["..."]}]}. Every supplied file must occur once. Use a short title and a 2–4 sentence explanation for each layer, in simple language. Questions should highlight uncertainties, not invent bugs.\nReview data:\n${JSON.stringify({ title: review.title.slice(0, 1_000), description: review.description.slice(0, 3_000), files: context })}`;
+  for (const [index, units] of batches.entries()) {
+    const context = units.map(evidence);
+    const prompt = `Organize these numbered changed patch rows into logical review layers. Return ONLY JSON: {"summary":"...","layers":[{"title":"...","summary":"...","ranges":[{"changeId":"exact supplied ID","start":1,"end":3}],"questions":[]}]}. start/end are inclusive row numbers within a changeId, NOT source line numbers. Every supplied row should belong to exactly one layer. You may split a changeId at ANY row and combine ranges across files. A single file can appear in multiple layers. Group by purpose, not file boundaries. Preserve removed and added rows; keep replacements together when they represent the same concern. Use short titles and 2–4 simple sentences per layer. Highlight uncertainties without inventing bugs.
+Review data:
+${JSON.stringify({ title: review.title.slice(0, 500), description: review.description.slice(0, 1000), changes: context })}`;
     try {
-      if (index >= 12) throw new Error('Layer model call budget exhausted.');
+      if (index >= 12 || prompt.length > contextLimit) throw new Error('Layer model budget exhausted.');
       const raw = (await complete(ai, prompt, true)).trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
-      const parsed = validateLayers(JSON.parse(raw), files.map(f => f.path), `batch-${index}`);
+      const parsed = validateRangeLayers(JSON.parse(raw), units, `batch-${index}`);
       summaries.push(parsed.summary); layers.push(...parsed.layers);
     } catch {
-      warnings.push(`Batch ${index + 1} could not be explained by the model. Its files remain available in local groups. Check your endpoint, model, and credentials.`);
-      layers.push(...localAnalysis({ ...review, files }).layers.map(l => ({ ...l, id: `fallback-${index}-${l.id}` })));
+      warnings.push(`Batch ${index + 1} could not be explained by the model. Its changes remain available in local groups.`);
+      const paths = [...new Set(units.map(u => u.path))];
+      layers.push({ id: `fallback-${index}`, title: 'Additional changes', summary: 'These changes have no model explanation.', files: paths,
+        ranges: units.map(u => ({ changeId: u.id, start: 1, end: u.lines.length })), questions: [] });
     }
   }
+  if (review.files.some(f => f.incomplete)) warnings.push('Some patches are incomplete. Layers cover the available changes only.');
   let summary = summaries.join('\n\n') || localAnalysis(review).summary;
   if (repository && summaries.length) {
     try { summary = await summarizeRepository(review, ai, layers, repository); }
