@@ -1,4 +1,7 @@
 #!/usr/bin/env bun
+import packageInfo from '../package.json';
+declare const CHANGE_STACK_BUILD_VERSION: string;
+const version = typeof CHANGE_STACK_BUILD_VERSION === 'string' ? CHANGE_STACK_BUILD_VERSION : packageInfo.version;
 import * as p from '@clack/prompts';
 import { parseArgs } from 'node:util';
 import { configPath, loadConfig, promptPath, saveConfig } from './core/config';
@@ -65,14 +68,18 @@ async function setupAI(config: Config): Promise<AIConfig | undefined> {
 
 async function main() {
   const { values, positionals } = parseArgs({ args: Bun.argv.slice(2), allowPositionals: true, options: {
-    help: { type: 'boolean', short: 'h' }, demo: { type: 'boolean' }, 'no-open': { type: 'boolean' }, 'no-ai': { type: 'boolean' },
-    setup: { type: 'boolean' }, port: { type: 'string' },
+    help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' }, demo: { type: 'boolean' }, 'no-open': { type: 'boolean' }, 'no-ai': { type: 'boolean' },
+    setup: { type: 'boolean' }, port: { type: 'string' }, listen: { type: 'string' }, 'public-url': { type: 'string' },
     'system-prompt': { type: 'string' }, 'system-prompt-file': { type: 'string' }, language: { type: 'string' }, 'default-language': { type: 'string' },
     'max-tool-calls': { type: 'string' }, 'max-context-chars': { type: 'string' }, 'max-output-tokens': { type: 'string' },
   } });
-  if (values.help) { console.log(`Change Stack\n\nUsage: cstack [review-url] [options]\n\n  --setup      Configure or replace Git and AI credentials\n  --no-ai      Review without contacting the model\n  --no-open    Print URLs without launching a browser\n  --port N     Choose the local server port (default: automatic)\n  --language en|ru             Override language for this review\n  --default-language en|ru     Save the default language (no URL needed)\n  --system-prompt TEXT         Replace the default explanation prompt\n  --system-prompt-file PATH    Read a replacement prompt from a UTF-8 file\n  --max-tool-calls N           Repository reads (default: 6, range: 0–20)\n  --max-context-chars N        Input characters per model call (default: 48000)\n  --max-output-tokens N        Output tokens per call, including reasoning\n  --demo       Open a sample review with no outbound requests\n\nSettings and credentials: ${configPath()}\nEditable system prompt: ${promptPath()}\nCredentials are saved in a local plaintext file with mode 0600 on POSIX.\nCode, questions, and analysis are held in memory and discarded on exit.`); return; }
-  const port = values.port === undefined ? 0 : Number(values.port);
+  if (values.version) { console.log(version); return; }
+  if (values.help) { console.log(`Change Stack\n\nUsage: cstack [review-url] [options]\n\n  --version    Show the executable version\n  --setup      Configure or replace Git and AI credentials\n  --no-ai      Review without contacting the model\n  --no-open    Print URLs without launching a browser\n  --port N     Choose the local server port (default: 4317; 0: automatic)\n  --listen HOST               Bind address (default: 127.0.0.1)\n  --public-url ORIGIN          Browser origin for container/proxy access\n  --language en|ru             Override language for this review\n  --default-language en|ru     Save the default language (no URL needed)\n  --system-prompt TEXT         Replace the default explanation prompt\n  --system-prompt-file PATH    Read a replacement prompt from a UTF-8 file\n  --max-tool-calls N           Repository reads (default: 6, range: 0–20)\n  --max-context-chars N        Input characters per model call (default: 48000)\n  --max-output-tokens N        Output tokens per call, including reasoning\n  --demo       Open a sample review with no outbound requests\n\nSettings and credentials: ${configPath()}\nEditable system prompt: ${promptPath()}\nCredentials are saved in a local plaintext file with mode 0600 on POSIX.\nCode, questions, and analysis are held in memory and discarded on exit.`); return; }
+  const port = values.port === undefined ? 4317 : Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Port must be an integer between 0 and 65535.');
+  const listen = values.listen ?? '127.0.0.1';
+  if (listen !== '127.0.0.1' && !values['public-url']) throw new Error('A public URL is required when using another bind address.');
+  if (values['public-url']) serviceUrl(values['public-url']);
   const overrides: Partial<AIConfig> = {};
   if (values['default-language'] && !['en', 'ru'].includes(values['default-language'])) throw new Error('Default language must be en or ru.');
   if (values.language) {
@@ -143,7 +150,7 @@ async function main() {
     tools = reviewTools(review, host);
     session = { review, analysis, aiEnabled: !!ai, demo: false };
   }
-  const { server, url } = startServer(session, ai, port, undefined, '127.0.0.1', tools);
+  const { server, url } = startServer(session, ai, port, values['public-url'], listen, tools);
   p.outro(`Review ready: ${url}\nKeep this terminal running. Press Ctrl+C to close the review.`);
   if (!values['no-open']) void openBrowser(url);
   for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => { server.stop(true); process.exit(0); });

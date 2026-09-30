@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
+import { SplitDivider } from './split-divider';
 import { PatchDiff } from '@pierre/diffs/react';
 import { Button } from './components/ui/button';
 import { layerFile, wholeRanges, type SourcePair } from '../core/changes';
@@ -12,9 +13,10 @@ export async function readApi<T>(endpoint: string, body: unknown): Promise<T> {
   return value;
 }
 export interface LineTarget { path: string; line: number; side: 'old' | 'current'; serial: number }
-export function ReviewPatch({ file, ranges, theme, layout, contextAvailable, lookup, target }: {
+export function ReviewPatch({ file, ranges, theme, layout, contextAvailable, lookup, target, scope, splitRatio, onSplitRatioChange }: {
   file: ChangedFile; ranges?: ChangeRange[]; theme: ReviewTheme; layout: 'split' | 'unified'; contextAvailable: boolean;
-  lookup: (symbol: string, path: string) => void; target?: LineTarget;
+  lookup: (symbol: string, path: string) => void; target?: LineTarget; scope?: React.ReactNode;
+  splitRatio: number; onSplitRatioChange: (value: number) => void;
 }) {
   const [source, setSource] = useState<SourcePair>(), [context, setContext] = useState(3);
   const [exhausted, setExhausted] = useState(false);
@@ -31,21 +33,32 @@ export function ReviewPatch({ file, ranges, theme, layout, contextAvailable, loo
     catch (error) { setError((error as Error).message); }
     finally { setLoading(false); }
   }
-  return <>
-    {contextAvailable && (file.status === 'modified' || file.status === 'renamed') && <div className="flex min-h-8 flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 text-xs text-muted-foreground">
-      <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={loading || exhausted || context >= 203} title="Adds unchanged lines before and after the edits. Stops at changes outside this layer." onClick={() => void expand()} aria-label={`Expand context ${file.path}`}>{loading ? 'Loading…' : 'Show nearby unchanged code'}</Button>
-      {context > 3 && <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => { setContext(3); setExhausted(false); }}>Reset context</Button>}
-      {exhausted && !error && <span role="status">No more unchanged lines beside these edits.</span>}
-      {context > 3 && !exhausted && !error && <span>{ranges ? 'Unchanged code only · other layer edits stay hidden' : 'Unchanged lines added around the edits'}</span>}
-      {error && <span role="status">{error}</span>}
-    </div>}
+  const lookupRef = useRef(lookup); lookupRef.current = lookup;
+  // Resizing changes inherited CSS only; keep Pierre's rendered patch stable.
+  const patch = useMemo(() => (
     <PatchDiff patch={displayed.patch} selectedLines={target?.path === file.path ? { start: target.line, end: target.line, side: target.side === 'old' ? 'deletions' : 'additions' } : undefined}
       options={{ theme, themeType: theme.endsWith('dark') ? 'dark' : 'light', diffStyle: layout, preferredHighlighter: 'shiki-js',
-        enableLineSelection: true, disableFileHeader: true, useTokenTransformer: true,
+        enableLineSelection: true, disableFileHeader: true,
+        unsafeCSS: '[data-diff-type=split][data-overflow=scroll]{grid-template-columns:minmax(0,var(--change-stack-split-left,50%)) minmax(0,1fr)}', useTokenTransformer: true,
         onTokenClick: (token, event) => {
-          if (event.altKey) { event.preventDefault(); const symbol = token.tokenText.trim(); if (/^[A-Za-z_$][\w$]{1,79}$/.test(symbol)) lookup(symbol, file.path); }
+          if (event.altKey) { event.preventDefault(); const symbol = token.tokenText.trim(); if (/^[A-Za-z_$][\w$]{1,79}$/.test(symbol)) lookupRef.current(symbol, file.path); }
         },
       }} />
+  ), [displayed.patch, target, file.path, theme, layout]);
+  const canExpand = contextAvailable && (file.status === 'modified' || file.status === 'renamed');
+  return <>
+    {(scope || canExpand) && <div data-testid="file-tools" className="flex min-h-8 flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 text-xs text-muted-foreground">
+      {scope}
+      {canExpand && <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={loading || exhausted || context >= 203} title="Adds unchanged lines before and after the edits. Stops at changes outside this layer." onClick={() => void expand()} aria-label={`Expand context ${file.path}`}>{loading ? 'Loading…' : 'Nearby code'}</Button>}
+      {context > 3 && <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => { setContext(3); setExhausted(false); }}>Reset</Button>}
+      {exhausted && !error && <span role="status">No more nearby unchanged lines.</span>}
+
+      {error && <span role="status">{error}</span>}
+    </div>}
+    <div className="relative" data-testid="patch-pane">
+    {layout === 'split' && <SplitDivider value={splitRatio} onChange={onSplitRatioChange} path={file.path} />}
+    {patch}
+    </div>
   </>;
 }
 

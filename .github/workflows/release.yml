@@ -1,0 +1,76 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  macos:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run test
+      - run: bun run build
+      - run: bun run test:tls
+      - run: bunx playwright install chromium
+      - run: bun run test:ui
+      - run: bun run build:release
+        env:
+          CHANGE_STACK_RELEASE_VERSION: ${{ github.ref_name }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-intel-release
+          path: |
+            dist/cstack-*-macos-x64.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+  image:
+    needs: macos
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test container
+        run: |
+          docker build -t change-stack:release .
+          bash scripts/smoke-container.sh change-stack:release
+      - name: Publish versioned image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+          REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$REGISTRY_USER" --password-stdin
+          IMAGE="ghcr.io/${REPOSITORY,,}"
+          docker tag change-stack:release "$IMAGE:$VERSION"
+          docker push "$IMAGE:$VERSION"
+  publish:
+    needs: [macos, image]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-intel-release
+          path: dist
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          PRERELEASE=()
+          if [[ "$VERSION" == *-* ]]; then PRERELEASE=(--prerelease); fi
+          gh release create "$VERSION" dist/cstack-*-macos-x64.tar.gz dist/SHA256SUMS --verify-tag --title "Change Stack $VERSION" --notes-file docs/release-notes.md "${PRERELEASE[@]}"

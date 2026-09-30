@@ -2,7 +2,7 @@ import React, { Component, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Virtualizer } from '@pierre/diffs/react';
 import { FileTree, useFileTree } from '@pierre/trees/react';
-import { ChevronLeft, ChevronRight, Columns2, Rows2, Sun, Moon, Files, TriangleAlert, Search, SearchCode } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Columns2, Rows2, Sun, Moon, Files, TriangleAlert, Search, SearchCode, Keyboard } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { themes, type ReviewTheme } from './themes';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -23,6 +23,7 @@ import { ReviewPatch, readApi, patchLineOffset, type LineTarget } from './review
 import { CodePeek, type PeekState } from './code-peek';
 import type { SymbolResult } from '../core/review-tools';
 import { layerFile } from '../core/changes';
+import { Shortcuts } from './shortcuts';
 import { Summary } from './summary';
 import type { ChangedFile, Session } from '../core/types';
 import './generated.css';
@@ -79,6 +80,8 @@ function ReviewWorkspace({ session }: { session: Session }) {
   const [layersOpen, setLayersOpen] = useState(true);
   const [treeOpen, setTreeOpen] = useState(true);
   const activeLayerIndex = analysis.layers.findIndex(layer => layer.id === activeLayer);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [splitRatio, setSplitRatio] = useState(50);
   const [layout, setLayout] = useState<'split' | 'unified'>('split');
   const { isMobile, setOpenMobile, setOpen, open, openMobile } = useSidebar();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -89,11 +92,15 @@ function ReviewWorkspace({ session }: { session: Session }) {
   const layer = analysis.layers.find(layer => layer.id === activeLayer);
   const files = useMemo(() => review.files.filter(file => !layer || layer.files.includes(file.path)).map(file => layer?.ranges && file.patch ? layerFile(file, layer.ranges) : file), [review.files, layer]);
   const warnings = [...review.warnings, ...analysis.warnings];
-  const [theme, setTheme] = useState<ReviewTheme>(() => matchMedia('(prefers-color-scheme: dark)').matches ? 'github-dark' : 'github-light');
+  const [theme, setTheme] = useState<ReviewTheme>(() => {
+    try { const saved = localStorage.getItem('change-stack.theme'); if (saved && Object.hasOwn(themes, saved)) return saved as ReviewTheme; } catch { /* Storage can be unavailable. */ }
+    return matchMedia('(prefers-color-scheme: dark)').matches ? 'github-dark' : 'github-light';
+  });
   const dark = theme.endsWith('dark');
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark);
     document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem('change-stack.theme', theme); } catch { /* Theme remains usable without storage. */ }
   }, [theme, dark]);
   useEffect(() => { document.title = `${review.target.project} #${review.target.number}`; }, [review]);
 
@@ -153,8 +160,8 @@ function ReviewWorkspace({ session }: { session: Session }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const typing = event.composedPath().some(e => e instanceof HTMLElement && (e.matches('input,textarea,select,[role="combobox"]') || e.isContentEditable));
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); if (!peek) setSearchOpen(open => !open); return; }
-      if (typing || searchOpen || peek || event.metaKey || event.ctrlKey || event.altKey) return;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); if (!peek && !shortcutsOpen) setSearchOpen(open => !open); return; }
+      if (typing || searchOpen || peek || shortcutsOpen || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key === '/' || event.key === '?') { event.preventDefault(); setSearchOpen(true); }
       else if (event.key === 'j' && activeLayerIndex < analysis.layers.length - 1) { event.preventDefault(); chooseLayer(analysis.layers[activeLayerIndex + 1].id); }
       else if (event.key === 'k' && activeLayerIndex > 0) { event.preventDefault(); chooseLayer(analysis.layers[activeLayerIndex - 1].id); }
@@ -163,7 +170,7 @@ function ReviewWorkspace({ session }: { session: Session }) {
       else if (event.key === '[') { event.preventDefault(); if (isMobile) setOpenMobile(!openMobile); else setOpen(!open); }
     };
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
-  }, [files, activeLayerIndex, searchOpen, peek, isMobile, open, openMobile]);
+  }, [files, activeLayerIndex, searchOpen, peek, shortcutsOpen, isMobile, open, openMobile]);
 
   function setFileCollapsed(path: string, value: boolean) {
     setCollapsed(previous => { const next = new Set(previous); if (value) next.add(path); else next.delete(path); return next; });
@@ -174,6 +181,7 @@ function ReviewWorkspace({ session }: { session: Session }) {
   }
 
   return <>
+    <Shortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     <ReviewSearch session={session} open={searchOpen} setOpen={setSearchOpen} choose={chooseResult} />
     <CodePeek state={peek} close={closePeek} lookup={symbol => void lookupSymbol(symbol, lookupPath.current)} canJump={path => review.files.some(f => f.path === path)} jump={(path, line) => { closePeek(); jumpAnywhere(path, line); }} />
     <Sidebar collapsible="offcanvas" className="border-r">
@@ -237,6 +245,7 @@ function ReviewWorkspace({ session }: { session: Session }) {
             onClick={() => chooseLayer(analysis.layers[activeLayerIndex + 1]!.id)}><ChevronRight className="size-3.5" /></Button>
         </div>
         <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Search changes" title="Search (⌘/Ctrl K)" onClick={() => setSearchOpen(true)}><Search className="size-4" /></Button>
+        <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Keyboard shortcuts" title="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)}><Keyboard className="size-4" /></Button>
         <Select value={theme} onValueChange={value => setTheme(value as ReviewTheme)}>
           <SelectTrigger aria-label="Theme" title="Theme" className="h-7! w-7! justify-center border-0 bg-transparent! p-0 shadow-none [&>svg:last-child]:hidden">{dark ? <Moon className="size-4" /> : <Sun className="size-4" />}<span className="sr-only"><SelectValue /></span></SelectTrigger>
           <SelectContent>{Object.entries(themes).map(([id, label]) => <SelectItem key={id} value={id}>{label}</SelectItem>)}</SelectContent>
@@ -246,11 +255,15 @@ function ReviewWorkspace({ session }: { session: Session }) {
             <TabsTrigger value="unified" aria-label="Unified" title="Unified diff" className="h-7! w-7! flex-none rounded-sm p-0 shadow-none! data-[state=active]:bg-accent"><Rows2 className="size-3.5" /></TabsTrigger></TabsList>
         </Tabs>
       </header>
-      <div className="min-h-0 flex-1" data-testid="diff-scroll">
+      <div className="min-h-0 flex-1" data-testid="diff-scroll" style={{ '--change-stack-split-left': `${splitRatio}%` } as React.CSSProperties}>
         <Virtualizer className="diff-viewport h-full overflow-auto" config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }} contentClassName="pb-4">
           <div ref={summary} className="m-3 scroll-mt-3 rounded-md border bg-sidebar/40 p-3" data-testid={layer ? 'layer-summary' : 'pr-summary'}>
             <Summary text={layer?.summary ?? analysis.summary} />
-            <p className="mt-3 border-t pt-2 text-xs text-muted-foreground" data-testid="diff-scope">{layer?.ranges ? 'Original Git diff · only changes assigned to this layer' : layer ? 'Original Git diff · all changes in these files' : 'Original Git diff · all PR changes'}</p>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-2 text-xs text-muted-foreground"><p data-testid="diff-scope">{layer?.ranges ? 'Original Git diff · only changes assigned to this layer' : layer ? 'Original Git diff · all changes in these files' : 'Original Git diff · all PR changes'}</p>
+              {!layer && <span data-testid="pr-statistics" className="flex flex-wrap items-center gap-3 tabular-nums">
+                <span>{review.files.length} files</span><span className="text-green-600 dark:text-green-400">+{review.files.reduce((n, f) => n + f.additions, 0)} lines</span><span className="text-red-600 dark:text-red-400">−{review.files.reduce((n, f) => n + f.deletions, 0)} lines</span><span>{analysis.layers.length} layers</span>
+              </span>}
+            </div>
           </div>
           {warnings.map((warning, index) => <Alert key={index} className="mx-3 mb-3 w-auto text-muted-foreground"><TriangleAlert className="size-4" />
             <AlertDescription>{warning}</AlertDescription></Alert>)}
@@ -258,6 +271,10 @@ function ReviewWorkspace({ session }: { session: Session }) {
             const original = review.files.find(f => f.path === file.path)!;
             const partial = !!layer?.ranges && (file.additions !== original.additions || file.deletions !== original.deletions);
             const otherLayers = analysis.layers.filter(l => l.id !== layer?.id && l.files.includes(file.path)).length;
+            const scope = layer?.ranges ? <>
+              <span data-testid="file-scope">{partial ? `Layer: +${file.additions} −${file.deletions} · Whole file: +${original.additions} −${original.deletions}${otherLayers ? ` · Also changed in ${otherLayers} other ${otherLayers === 1 ? 'layer' : 'layers'}` : ''}` : 'All file edits in this layer'}</span>
+              {partial && <Button variant="link" className="h-auto p-0 text-xs" onClick={() => jumpAnywhere(file.path)}>View all file changes</Button>}
+            </> : undefined;
             return <section ref={element => { if (element) sections.current.set(file.path, element); else sections.current.delete(file.path); }} key={file.path} aria-label={file.path} className="diff-container scroll-mt-0 border-b bg-background" data-testid="file-diff">
             <Collapsible open={!collapsed.has(file.path)} onOpenChange={open => setFileCollapsed(file.path, !open)}>
               <div className="sticky top-0 z-10 flex min-h-10 items-center gap-3 bg-sidebar px-3">
@@ -273,15 +290,11 @@ function ReviewWorkspace({ session }: { session: Session }) {
                 </label>
               </div>
               <CollapsibleContent className="border-t" data-testid="file-diff-content">
-            {layer?.ranges && <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-1.5 text-xs text-muted-foreground" data-testid="file-scope">
-              <span>{partial ? `Layer: +${file.additions} −${file.deletions} · Whole file: +${original.additions} −${original.deletions}${otherLayers ? ` · Also changed in ${otherLayers} other ${otherLayers === 1 ? 'layer' : 'layers'}` : ''}` : 'All changes in this file belong to this layer'}</span>
-              {partial && <Button variant="link" className="h-auto p-0 text-xs" onClick={() => jumpAnywhere(file.path)}>View all file changes</Button>}
-            </div>}
             {file.incomplete && <div className="border-b px-4 py-3 text-xs text-muted-foreground">{file.path}: this patch is incomplete.</div>}
             {file.patch ? <DiffBoundary key={file.path} patch={file.patch}>
               <ReviewPatch key={`${activeLayer}:${file.path}`} file={review.files.find(f => f.path === file.path)!} ranges={layer?.ranges} theme={theme} layout={layout}
-                contextAvailable={!!review.baseSha} lookup={(symbol, path) => void lookupSymbol(symbol, path)} target={target} />
-            </DiffBoundary> : <div className="p-4 text-sm text-muted-foreground">{file.path} · No text patch available.</div>}
+                scope={scope} splitRatio={splitRatio} onSplitRatioChange={setSplitRatio} contextAvailable={!!review.baseSha} lookup={(symbol, path) => void lookupSymbol(symbol, path)} target={target} />
+            </DiffBoundary> : <div className="p-4 text-sm text-muted-foreground">{scope}{file.path} · No text patch available.</div>}
               </CollapsibleContent>
             </Collapsible>
           </section>; })}

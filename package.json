@@ -11,7 +11,9 @@
     "build": "bun run styles && bun build --compile src/cli.ts --outfile dist/cstack",
     "notices": "bun scripts/notices.ts",
     "test:ui": "bun scripts/smoke-ui.ts",
-    "styles": "tailwindcss -i src/web/styles.css -o src/web/generated.css --minify"
+    "styles": "tailwindcss -i src/web/styles.css -o src/web/generated.css --minify",
+    "test:tls": "bun scripts/smoke-tls.ts",
+    "build:release": "bun run styles && bun scripts/build-release.ts"
   },
   "dependencies": {
     "@clack/prompts": "latest",

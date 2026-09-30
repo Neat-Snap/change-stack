@@ -1,143 +1,428 @@
 # Change Stack
 
-A minimal local review workspace for GitLab (including self-hosted instances) and GitHub (including Enterprise), built with TypeScript, Bun, React, shadcn/ui, Tailwind CSS, and Pierre's `@pierre/diffs` and `@pierre/trees`.
+**`cstack` — локальный инструмент для ревью GitLab merge request и GitHub pull request.** Он открывает изменения в браузере, группирует их в понятные слои и помогает читать код по частям. Работает с нашим внутренним GitLab и OpenAI-совместимым API модели: адреса и личные ключи указываются при первом запуске.
 
-## Run
+Для работы не нужно устанавливать Bun, Node.js или зависимости. В релизе будет один автономный бинарник для **macOS на Intel, x86_64**. Бинарник содержит Bun 1.3.14 и весь интерфейс. Apple Silicon, Windows и Linux-бинарники пока не входят в релиз.
+
+> Пока первый релиз не опубликован, готового файла в Releases нет. Сборка и публикация запускаются только после отправки тега версии. Обычный push проверяет код и собирает предварительный артефакт, но не публикует релиз.
+
+## Быстрый старт для коллег
+
+1. Скачайте и установите `cstack` по инструкции ниже.
+2. Подключитесь к сети компании или корпоративному VPN, чтобы были доступны GitLab и API модели.
+3. Откройте терминал и выполните `cstack`.
+4. Выберите **GitLab** или **GitHub**, затем вставьте ссылку на merge request / pull request.
+5. Подтвердите предложенный адрес Git-сервиса. CLI откроет в браузере страницу создания личного токена на этом сервере. Создайте токен с правами чтения и вставьте его в терминал: ввод скрыт.
+6. Укажите адрес внутреннего OpenAI-совместимого API, идентификатор модели и свой ключ API. Эти значения выдаются в компании; адрес GitLab и адрес модели могут различаться. Если модель пока недоступна, этот шаг можно пропустить.
+7. Дождитесь загрузки изменений и подготовки слоёв. CLI откроет готовое ревью в браузере.
+
+**Оставьте терминал открытым**, пока смотрите ревью. `Ctrl+C` завершает процесс и закрывает локальный сервер. Если браузер не открылся автоматически, скопируйте ссылку `Review ready` из терминала.
+
+Дальше достаточно одной команды — сохранённые настройки будут использованы автоматически:
+
+```sh
+cstack 'https://gitlab.company.internal/team/project/-/merge_requests/123'
+```
+
+Ссылка в примере условная: вставьте настоящую ссылку из нашего GitLab. Для GitHub используется обычная ссылка вида `https://github.com/owner/repo/pull/123`, для GitHub Enterprise — адрес своего сервера.
+
+Посмотреть интерфейс без токенов, модели и запросов к Git-сервисам:
+
+```sh
+cstack --demo
+```
+
+## Скачать и установить на macOS Intel
+
+### Скачать архив
+
+Откройте [Releases](https://github.com/Neat-Snap/change-stack/releases) и выберите нужную версию. В разделе **Assets** скачайте:
+
+- `cstack-vX.Y.Z-macos-x64.tar.gz` — приложение и инструкция;
+- `SHA256SUMS` — контрольную сумму архива.
+
+Репозиторий приватный: достаточно войти в GitHub под аккаунтом с доступом к проекту. Если страница недоступна, уточните доступ у владельца проекта. Токен для скачивания не нужно вводить в Change Stack.
+
+Проверьте архитектуру своего Mac:
+
+```sh
+uname -m
+```
+
+Для этого релиза ожидается `x86_64`. Выпуск ориентирован на macOS 13 и новее; CI выполняет нативные проверки на Intel с macOS 15. На компьютерах M1/M2/M3 и других Apple Silicon используйте будущий отдельный выпуск, когда он появится.
+
+### Проверить и распаковать
+
+Оба скачанных файла должны находиться в одной папке. Ниже вместо `v0.1.0` укажите версию скачанного релиза:
+
+```sh
+cd ~/Downloads
+shasum -a 256 -c SHA256SUMS
+# Ожидаемый результат: cstack-v0.1.0-macos-x64.tar.gz: OK
+
+tar -xzf cstack-v0.1.0-macos-x64.tar.gz
+cd cstack-v0.1.0-macos-x64
+chmod +x cstack
+./cstack --version
+./cstack --demo
+```
+
+В архиве находятся `cstack`, этот `README.md` и `THIRD_PARTY_NOTICES.txt`. Если проверка суммы не прошла, скачайте файлы одной версии заново. Контрольная сумма проверяет целостность; она не является подписью разработчика.
+
+### Добавить команду в PATH
+
+Установка в домашнюю папку не требует `sudo`:
+
+```sh
+mkdir -p ~/.local/bin
+cp cstack ~/.local/bin/cstack
+chmod +x ~/.local/bin/cstack
+```
+
+Если `~/.local/bin` ещё нет в `PATH`, добавьте строку в `~/.zshrc`:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Откройте новый терминал и проверьте:
+
+```sh
+cstack --version
+cstack
+```
+
+### Если macOS блокирует запуск
+
+Текущая сборка **не подписана Developer ID и не нотарифицирована Apple**. TLS-сертификаты для доступа к GitLab и подпись приложения в macOS — разные вещи.
+
+Если macOS заблокировала запуск, после проверки источника и суммы архива откройте **Системные настройки → Конфиденциальность и безопасность** и разрешите запуск этого приложения. Если корпоративная политика разрешает убрать quarantine только с проверенного бинарника, можно использовать:
+
+```sh
+xattr -d com.apple.quarantine ~/.local/bin/cstack
+```
+
+Не требуется отключать Gatekeeper целиком. Если разрешение запуска управляется компанией, обратитесь к IT.
+
+### Обновить или удалить
+
+Чтобы обновить приложение, скачайте новый релиз, проверьте сумму и замените `~/.local/bin/cstack`. Настройки при этом остаются в `~/.change-stack/`. Автоматического обновления и проверки новых версий нет.
+
+Чтобы удалить приложение, удалите бинарник. Чтобы удалить также сохранённые ключи и настройки, удалите `~/.change-stack/`. После миграции старого формата настройки могли остаться также в `~/.config/change-stack/config.json` или каталоге `$XDG_CONFIG_HOME/change-stack/`: удалите старую копию отдельно. Тему можно очистить через настройки данных сайта в браузере.
+
+## Первый запуск: Git-сервис и токены
+
+Без аргументов `cstack` предлагает выбрать Git-сервис и вставить ссылку. Можно сразу передать ссылку команде: CLI определит сервис и попросит настроить доступ, если для этого сервера ещё нет сохранённого токена.
+
+CLI извлекает адрес сервера из ссылки и предлагает подтвердить его. Для GitLab, установленного под префиксом, например `https://host.company/gitlab`, укажите базовый адрес вместе с этим префиксом. Для GitHub Enterprise используется API своего сервера, а не публичный `api.github.com`.
+
+После подтверждения открывается страница создания токена **на выбранном Git-сервисе**. Авторизация происходит в вашем браузере; Change Stack не запрашивает пароль от GitLab / GitHub.
+
+| Сервис | Что создать | Минимальные права |
+| --- | --- | --- |
+| GitLab, в том числе внутренний | Personal Access Token | `read_api`; срок действия по правилам компании |
+| GitHub / GitHub Enterprise | Fine-grained Personal Access Token | Доступ к нужному репозиторию, **Pull requests: Read**, **Contents: Read** |
+
+Для GitHub может потребоваться одобрение организации. Для каждого Git-сервера токен сохраняется отдельно. CLI проверяет токен до сохранения. Если он истёк, сменился или нужно настроить модель заново:
+
+```sh
+cstack '<ссылка-на-ревью>' --setup
+```
+
+Первичная интерактивная настройка требует терминала. Для скриптов и контейнеров сначала подготовьте настройки интерактивно, затем используйте их при запуске.
+
+## Подключить внутреннюю модель
+
+После Git-сервиса CLI предлагает подключить OpenAI-совместимый API. Укажите:
+
+1. **Базовый адрес API** — например, `https://ai.company.internal/v1`. Если ваш сервис использует `/v1`, включите его в адрес. CLI добавляет `/chat/completions` самостоятельно.
+2. **Идентификатор модели** — точное имя, выданное в компании. Не нужно угадывать его по названию модели.
+3. **Личный ключ API модели** — вставляется скрытым вводом.
+4. **Язык объяснений** — русский или английский.
+
+По умолчанию нет внешней модели или запасного облачного API. При ошибке подключения не происходит автоматического переключения на другой сервис. Если пропустить настройку модели, интерфейс работает с локальными группами по путям файлов. Слои в таком режиме не являются смысловым разбиением от LLM.
+
+Отключить модель для одного запуска:
+
+```sh
+cstack '<ссылка-на-ревью>' --no-ai
+```
+
+OpenRouter можно настроить отдельно, только когда это разрешено правилами использования кода. Его базовый адрес — `https://openrouter.ai/api/v1`. Для модели `openai/gpt-6-luna` приложение использует high reasoning и Flex, запрещает fallback на другого провайдера и принимает результат только при подтверждённом `service_tier: "flex"`. Запрос Flex может занимать до десяти минут. Для других совместимых API опциональные `reasoningEffort` и `serviceTier` задаются в локальном `config.json`; конкретный API должен поддерживать эти параметры.
+
+## Корпоративные TLS-сертификаты
+
+Бинарник включает Bun и его доверенные публичные корневые сертификаты. Не нужно скачивать отдельный пакет CA для обычных HTTPS-серверов. Проверка сертификата и имени сервера остаётся включённой.
+
+Если GitLab, API модели или корпоративный прокси используют внутренний центр сертификации, получите **PEM-файл корневых / промежуточных CA у IT**. Не передавайте приватные ключи. Укажите путь до запуска:
+
+```sh
+CHANGE_STACK_CA_FILE="$HOME/.change-stack/company-ca.pem" \
+  cstack 'https://gitlab.company.internal/team/project/-/merge_requests/123'
+```
+
+Чтобы не писать переменную каждый раз, добавьте в `~/.zshrc`:
+
+```sh
+export CHANGE_STACK_CA_FILE="$HOME/.change-stack/company-ca.pem"
+```
+
+Файл читается при HTTPS-запросах и **добавляется к публичным доверенным CA**, а не заменяет их. Он применяется к Git API и API модели. Путь хранится в переменной окружения; сам файл не отправляется модели и не включается в релиз. Можно использовать PEM с несколькими сертификатами. Обновите файл после смены корпоративного CA и перезапустите CLI.
+
+Не предполагается, что добавления сертификата в браузер или macOS Keychain достаточно для Bun 1.3.14. Используйте явный `CHANGE_STACK_CA_FILE`. Приложение принудительно включает проверку TLS даже если окружение пытается отключить её через `NODE_TLS_REJECT_UNAUTHORIZED=0`.
+
+Если HTTPS всё ещё не работает, проверьте VPN, имя сервера, срок действия сертификата и цепочку CA вместе с IT. Подробнее о [TLS в Bun](https://bun.com/reference/globals/BunFetchRequestInitTLS) и [встроенных корневых сертификатах](https://bun.com/reference/node/tls/rootCertificates).
+
+## Как пользоваться ревью
+
+### Слои, файлы и полный diff
+
+Слева находятся две независимые секции: **Layers** и **Files**. Обе можно свернуть. Длинный список слоёв прокручивается отдельно от дерева файлов. Иконки учитывают расширение файла; маркеры `A`, `M`, `D`, `R` означают создание, изменение, удаление и переименование.
+
+Выбор слоя показывает только реальные строки Git diff, назначенные этому слою. Модель выбирает группы строк и пишет объяснения; она не переписывает показываемый код. Один файл и даже один блок изменений могут входить в несколько слоёв. Неверные, пересекающиеся и придуманные диапазоны отбрасываются; неназначенные изменения сохраняются в дополнительном слое.
+
+**All changes** показывает все загруженные изменения PR / MR и общее описание. Здесь видны число файлов, добавленных и удалённых строк и число слоёв. Статистика относится к загруженному снимку, а не к текущему состоянию сервера. Если API не вернул часть изменений, показывается предупреждение, и статистика может быть неполной.
+
+В файле одна компактная строка объединяет пояснение области просмотра, переход **View all file changes** и кнопку **Nearby code**. Для частичного файла указаны счётчики текущего слоя и всего файла, а также число других слоёв с его изменениями. Переход к полному diff открывает All changes и прокручивает страницу к этому файлу.
+
+Клик в дереве файлов **прокручивает к файлу**, сохраняя остальные файлы на странице. **Reviewed** отмечает файл просмотренным и сворачивает его. Отметка сохраняется между слоями до перезагрузки страницы; раскрыть файл можно, не снимая отметку.
+
+### Вид, тема и ширина колонок
+
+Вверху справа можно выбрать split / unified и одну из четырёх тем: GitHub dark / light, GitLab dark / light. Тема запоминается в `localStorage` браузера. Если ничего не выбрано, первоначальная GitHub-тема следует системной настройке. Хранится только имя темы; код и ключи в `localStorage` не записываются.
+
+В **split** перетащите разделитель между старым и новым кодом. Пропорция общая для всех файлов текущего ревью, ограничена 20–80% и сохраняется при переключении слоёв и режима. Двойной клик возвращает 50/50. В unified разделителя нет. Ширина колонок хранится только в памяти текущей страницы.
+
+Настройки темы привязаны к адресу и порту локального сервера. По умолчанию CLI использует постоянный порт `4317`, поэтому тема сохраняется и между отдельными запусками. При необходимости можно выбрать другой постоянный порт:
+
+```sh
+cstack '<ссылка-на-ревью>' --port 4317
+```
+
+С `--port 0` выбирается свободный случайный порт, и браузер считает каждый такой адрес отдельным сайтом. Для нескольких одновременных ревью выберите разные порты; тема у этих адресов будет отдельной. Приватный режим или запрет хранилища браузера может мешать сохранению темы.
+
+### Поиск и клавиатура
+
+Лупа открывает локальный поиск по путям файлов, diff и объяснениям. Отображается до 100 результатов. Выбор строки diff открывает All changes, раскрывает файл и выделяет исходную строку. Поиск не обращается к модели.
+
+Кнопка с клавиатурой в правом верхнем углу открывает отдельную памятку:
+
+| Клавиши | Действие |
+| --- | --- |
+| `Cmd/Ctrl+K`, `/`, `?` | Открыть поиск |
+| `J` / `K` | Следующий / предыдущий слой |
+| `L` / `H` | Следующий / предыдущий файл текущего вида |
+| `U` | Переключить split / unified |
+| `[` | Показать / скрыть сайдбар |
+| `↑` / `↓`, `Enter` | Выбрать и открыть результат поиска |
+| `Esc` | Закрыть поиск, памятку или просмотр символа |
+| `Alt` + клик по токену кода | Найти определения и использования символа |
+| `←` / `→` на разделителе | Изменить ширину на 2%; с `Shift` — на 10% |
+| `Home` / `End` на разделителе | Установить ширину старой стороны 20% / 80% |
+| `Enter` или двойной клик на разделителе | Вернуть равные колонки |
+
+Буквенные сочетания работают без Shift, при английской раскладке. Они не переключают слои во время ввода текста и при открытом диалоге.
+
+### Контекст и символы
+
+**Nearby code** добавляет до 20 соседних неизменённых строк с каждой стороны изменений за один клик, максимум 200 дополнительных строк. Это помогает понять, в какой функции и при каких условиях выполняется изменённый код. **Reset** возвращает компактный diff. Расширение останавливается перед чужими изменениями и не подтягивает строки другого слоя. Контекст читается из зафиксированных base / head commit, поэтому он соответствует показываемому diff.
+
+Для контекста разрешено до 2 MB исходного текста на каждую сторону. При недоступном коммите, бинарном файле или превышении лимита показывается понятная причина; сам имеющийся diff остаётся доступен. Дополнительных вызовов модели нет.
+
+`Alt` + клик по подсвеченному символу или кнопка поиска символа в заголовке файла открывают определения и использования с соседними строками. Это ограниченный текстовый поиск, а не language server. Приоритет у текущего файла, изменённых файлов и ближайших каталогов. Диалог показывает количество проверенных / недоступных файлов и позволяет перейти к найденной строке, если файл есть в PR.
+
+Поиск символа обходит максимум 24 файла и четыре каталога. Один файл ограничен 250 000 символами текста и 512 KB ответа API. Кэш контекста и символов ограничен 24 записями и 8 млн символов, живёт только в памяти процесса. Одновременно допускаются два запроса к репозиторию от UI.
+
+## Язык объяснений и системный промпт
+
+Сохранить русский язык по умолчанию без ссылки на PR:
+
+```sh
+cstack --default-language ru
+```
+
+Переопределить язык одного ревью:
+
+```sh
+cstack '<ссылка-на-ревью>' --language en
+```
+
+Поддерживаются `ru` и `en`. Язык относится к объяснениям модели; подписи интерфейса сейчас английские. Стандартный промпт просит простые слова, короткие предложения и полезные детали.
+
+После настройки в `~/.change-stack/system-prompt.md` находится редактируемый системный промпт. Измените этот файл для следующих запусков. Разовый промпт можно передать отдельно:
+
+```sh
+cstack '<ссылка-на-ревью>' --system-prompt-file ./review-prompt.md
+cstack '<ссылка-на-ревью>' --system-prompt 'Объясняй изменения простыми словами.'
+```
+
+Допускается один вариант промпта, от 1 до 16 000 символов. Инструкции по языку и обращению с кодом как недоверенными данными добавляются отдельно.
+
+## Где хранятся настройки и данные
+
+```text
+~/.change-stack/
+├── config.json         # адреса сервисов, ключи, язык и лимиты модели
+├── system-prompt.md    # редактируемый промпт
+└── company-ca.pem      # необязательный сертификат, добавляется вручную
+```
+
+Ключи сохраняются **в открытом виде** в локальном файле. На macOS / Linux новый каталог создаётся с правами `0700`, `config.json` и промпт — `0600`. Интеграции с Keychain пока нет. Не отправляйте эту папку коллегам: каждый использует свои ключи. Альтернативный путь задаётся через `CHANGE_STACK_CONFIG`; промпт лежит рядом с выбранным config-файлом.
+
+Исходный код, diff, объяснения, отметки Reviewed и результаты поиска находятся в памяти процесса / страницы. Приложение не записывает их в базу или `localStorage`. В хранилище браузера записывается только тема; браузер и ОС могут самостоятельно хранить историю, память и данные согласно своим настройкам.
+
+По умолчанию UI доступен только на `127.0.0.1`. Случайный секрет из ссылки обменивается на HttpOnly session cookie и удаляется из адреса страницы. Запросы API требуют эту сессию; POST также проверяет origin. Ссылку запуска нужно хранить как доступ к текущему ревью.
+
+Запросы приложения направляются только к выбранному Git API и настроенному API модели. Публичный GitHub использует `api.github.com`, Enterprise — свой `/api/v3`, GitLab — свой `/api/v4`. Редиректы API запрещены: укажите конечный адрес сервиса. Нет аналитики, CDN, внешних шрифтов, автоматических обновлений и облачного fallback. Объяснения Markdown не загружают внешние картинки и HTML.
+
+Код отправляется модели только по явно настроенному адресу. Политики хранения самого Git-сервиса, модели, прокси, ОС и браузера остаются в ведении компании. При использовании внутренних сервисов их адреса должны быть доступны из сети, где запущен CLI.
+
+## Ограничить работу модели
+
+Для общего описания модель может читать выбранные неизменённые файлы source-репозитория на head commit. Полного клонирования, shell-команд и исполнения кода репозитория нет.
+
+Подготовка общего описания ограничена двумя раундами исследования или шестью read-only запросами, затем выполняется финальный запрос описания. Каждый tool call — максимум один Git API запрос. Чтение для модели ограничено 24 000 символами файла и 512 KB ответа; каталог возвращает до 100 записей. Генерация слоёв отдельно ограничена 12 вызовами. Необъяснённые изменения сохраняются в дополнительных группах.
+
+```sh
+cstack '<ссылка-на-ревью>' \
+  --max-tool-calls 2 \
+  --max-context-chars 24000 \
+  --max-output-tokens 16000
+```
+
+| Параметр | Значение по умолчанию | Диапазон |
+| --- | --- | --- |
+| `--max-tool-calls` | 6 | 0–20; 0 отключает чтение репозитория моделью |
+| `--max-context-chars` | 48 000 | 8 000–200 000 символов входного сообщения |
+| `--max-output-tokens` | 16 000 | 1 000–32 000 токенов, включая reasoning |
+
+Маленький output budget может не оставить модели места для ответа. Промпт учитывается отдельно от бюджета входного сообщения. Постоянные значения можно записать в `ai.maxToolCalls`, `ai.maxContextChars`, `ai.maxOutputTokens` в config-файле. Автоматических повторов запросов к модели нет.
+
+## Все параметры запуска
+
+```sh
+cstack --help
+```
+
+| Параметр | Назначение |
+| --- | --- |
+| `<review-url>` | Ссылка на PR / MR; без неё запускается интерактивный выбор |
+| `--setup` | Заново настроить Git-токен и модель |
+| `--no-ai` | Не обращаться к модели |
+| `--no-open` | Печатать ссылку без запуска браузера |
+| `--port N` | Локальный порт, по умолчанию 4317; 0 выбирает свободный случайный |
+| `--language en\|ru` | Язык объяснений этого ревью |
+| `--default-language en\|ru` | Сохранить язык для следующих запусков |
+| `--system-prompt TEXT` | Разовый системный промпт |
+| `--system-prompt-file PATH` | Разовый промпт из UTF-8 файла |
+| `--max-tool-calls N` | Лимит исследования репозитория моделью |
+| `--max-context-chars N` | Лимит входного сообщения модели |
+| `--max-output-tokens N` | Лимит ответа вместе с reasoning |
+| `--demo` | Открыть демонстрационные изменения |
+| `--version` | Показать версию бинарника |
+| `--listen HOST` | Адрес привязки сервера, по умолчанию `127.0.0.1` |
+| `--public-url ORIGIN` | Адрес браузерного UI для контейнера / прокси; обязателен с нестандартным `--listen` |
+
+## Если что-то не работает
+
+| Ситуация | Что проверить |
+| --- | --- |
+| `cstack: command not found` | Бинарник есть в `~/.local/bin`, права на запуск и `PATH` |
+| Браузер не открылся | Откройте ссылку `Review ready` из терминала вручную |
+| Соединение отклонено | CLI ещё работает, ссылка относится к текущему запуску, порт не занят; для параллельного запуска задайте другой `--port` |
+| Сессия истекла | Откройте новую ссылку из терминала; старый секрет не подходит после перезапуска |
+| Не удаётся загрузить MR / PR | VPN, URL, доступ к репозиторию, срок токена; при необходимости `--setup` |
+| HTTPS работает в браузере, но не в CLI | Передайте корпоративные CA через `CHANGE_STACK_CA_FILE` |
+| Модель долго готовит слои | Большой PR требует нескольких запросов; Flex может ждать до десяти минут |
+| AI пока недоступен | Откройте ревью с `--no-ai` |
+| Не хватает контекста / символ не найден | Файл недоступен на нужном commit или превышен ограниченный бюджет чтения |
+| В части файлов нет diff | API не вернул текст, файл бинарный или слишком большой; проверьте предупреждения |
+| Тема сбрасывается между запусками | Используйте тот же браузер и адрес; стандартный порт 4317 уже постоянный |
+| Корпоративный сертификат сменился | Обновите PEM от IT и перезапустите CLI |
+
+## Контейнер: дополнительный вариант
+
+Основной способ для коллег — macOS-бинарник. При необходимости тот же CLI можно запустить в Docker. Образ для **Linux amd64** будет опубликован после релизного тега в `ghcr.io/neat-snap/change-stack:vX.Y.Z`. Образ не содержит ваших ключей, сертификатов или кода ревью. Если пакет приватный, доступ к нему определяется настройками GitHub Packages.
+
+```sh
+docker volume create change-stack-settings
+docker run --rm -it \
+  -p 127.0.0.1:4317:4317 \
+  -v change-stack-settings:/data \
+  ghcr.io/neat-snap/change-stack:v0.1.0
+```
+
+Первый запуск интерактивный, как у обычного CLI. Браузер не запускается из контейнера: откройте напечатанную ссылку на хосте. Следующий запуск с тем же volume:
+
+```sh
+docker run --rm -it \
+  -p 127.0.0.1:4317:4317 \
+  -v change-stack-settings:/data \
+  ghcr.io/neat-snap/change-stack:v0.1.0 \
+  'https://gitlab.company.internal/team/project/-/merge_requests/123'
+```
+
+Внутренняя сеть / VPN и DNS должны быть доступны также из контейнера. Для корпоративного CA дополнительно передайте:
+
+```sh
+-v "$HOME/.change-stack/company-ca.pem:/certs/company-ca.pem:ro" \
+-e CHANGE_STACK_CA_FILE=/certs/company-ca.pem
+```
+
+Контейнер запускается без root, с UID 10001. Настройки находятся в `/data/config.json` и `/data/system-prompt.md`. При bind mount собственной папки согласуйте права владельца; named volume — самый простой вариант. В контейнере есть системный пакет `ca-certificates`, а бинарник также включает CA Bun. Порт публикуется только на loopback хоста. Смена внешнего адреса требует соответствующего `--public-url`; этот режим рассчитан на одно ревью одного пользователя, а не общий многопользовательский сервис.
+
+## Для разработки и сборки
+
+Стек: TypeScript, Bun 1.3.14, React, shadcn/ui, Tailwind CSS, Pierre `@pierre/diffs` и `@pierre/trees`. Зависимости фиксируются `bun.lock`; Trees закреплён на beta-версии. Сборка требует сети для зависимостей; готовый бинарник их не скачивает.
 
 ```sh
 bun install --frozen-lockfile
 bun run demo
-# Or start with a real review:
-bun src/cli.ts 'https://gitlab.company.internal/team/project/-/merge_requests/123'
-```
+bun src/cli.ts '<ссылка-на-ревью>'
 
-On first run without a URL, choose GitLab or GitHub and paste a review URL. The CLI infers the host, asks you to confirm the service base URL, opens its token creation page, and accepts a hidden token input. It verifies your credentials before saving them. For GitLab, use a personal access token with `read_api`. For GitHub, use a fine-grained token with access to the repository and **Pull requests: Read** and **Contents: Read**; your organization may need to approve it.
-
-Then optionally configure your company's OpenAI-compatible API **base URL** (including `/v1` when required), model ID, and API key. The client appends `/chat/completions`; it does not assume a model name or an external default endpoint. Setup can be skipped to use local path-based groups and the diff viewer without AI.
-
-OpenRouter is supported at `https://openrouter.ai/api/v1`. Setting the model to `openai/gpt-6-luna` in setup uses high reasoning and Flex processing. The client sends OpenRouter's `reasoning.effort` and top-level `service_tier`, restricts routing to OpenAI with provider fallback disabled, and accepts model output only when the response confirms `service_tier: "flex"`. Other compatible endpoints can use optional `reasoningEffort` (`high`, `xhigh`, or `max`) and `serviceTier` (`flex`) fields in the local AI configuration. Flex requests allow up to ten minutes and do not retry at a different tier. Temperature is omitted for reasoning requests.
-
-Subsequent runs need only the review URL:
-
-```sh
-cstack 'https://gitlab.company.internal/team/project/-/merge_requests/123'
-cstack 'https://github.company.internal/team/project/pull/123'
-```
-
-Each Git host has separate saved credentials. To replace credentials or configure AI later, use `--setup` with a review URL. `--no-ai` skips the model even when it is configured. `--no-open` prints URLs without opening a browser. `--port 4317` sets a fixed local port; otherwise the OS chooses a free port. `--demo` loads illustrative sample changes without making outbound application requests. Keep the terminal open while reviewing; Ctrl+C shuts down the server.
-
-## Explanation settings
-
-The default prompt asks for simple language, short sentences, and only useful detail. Use English (`en`, the default) or Russian (`ru`):
-
-```sh
-cstack 'https://github.company/team/project/pull/123' --language ru
-cstack 'https://github.company/team/project/pull/123' --system-prompt-file ./review-prompt.txt
-cstack 'https://github.company/team/project/pull/123' --system-prompt 'Explain each change in everyday language.'
-```
-
-Prompt and `--language` flags apply to this run. Save a default without providing a PR URL:
-
-```sh
-cstack --default-language ru
-cstack '<review-url>' --language en  # override for this review only
-```
-
-First-run setup stores everything in `~/.change-stack/`: `config.json` contains Git/model credentials, endpoint settings, budgets, and `defaultLanguage`; `system-prompt.md` contains the editable default prompt. Edit the Markdown file to change the prompt for future reviews. `--system-prompt` and `--system-prompt-file` override it for one run. The language and untrusted-code instructions are appended. Prompts must be nonempty and at most 16,000 characters. Existing settings are automatically copied from the previous `~/.config/change-stack/config.json` location (or its XDG equivalent), preserving credentials and preferences; the old file is left intact.
-
-PR summaries can use unchanged files anywhere in the source repository. The model chooses read-only `list_files` / `read_file` requests through a validated JSON protocol, compatible with endpoints that do not support native function calling. Reads use the PR's head commit, including forked source repositories. There is no shell execution or cloning.
-
-Exploration stops after two planning rounds or six tool calls, whichever comes first, then makes one final summary call. Every tool call makes at most one Git API request. Directory listings return at most 100 entries; GitLab can request the next page. Reads are limited to 512 KB of response data and 24,000 text characters per file. This is selective repository exploration, not a full repository audit. Layer generation is separately capped at 12 calls; further batches keep unexplained change ranges. There are no automatic retries.
-
-You can lower the budgets:
-
-```sh
-cstack 'https://github.company/team/project/pull/123' \
-  --max-tool-calls 2 --max-context-chars 24000 --max-output-tokens 16000
-```
-
-`--max-tool-calls` accepts 0–20 (0 skips repository reads but still generates a PR summary), `--max-context-chars` accepts 8,000–200,000 (default 48,000 user-message characters), and `--max-output-tokens` accepts 1,000–32,000. Output tokens include reasoning; reasoning models default to 16,000, so very small limits can prevent a usable answer. System prompt text is separate from the input character budget. Saved defaults use `maxToolCalls`, `maxContextChars`, and `maxOutputTokens` in `ai`. Repository or model failures retain the available layer summaries and show a warning.
-
-## Build a binary
-
-```sh
-bun run build
-./dist/cstack --demo
-```
-
-The binary embeds the Bun runtime and browser assets. End users do not need Bun, Node, or a package install. Build on the target platform or cross-compile with Bun:
-
-```sh
-bun build --compile --target=bun-linux-x64 src/cli.ts --outfile dist/cstack-linux-x64
-bun build --compile --target=bun-darwin-arm64 src/cli.ts --outfile dist/cstack-macos-arm64
-bun build --compile --target=bun-windows-x64 src/cli.ts --outfile dist/cstack-windows-x64.exe
-```
-
-Builds download dependencies from npm; the shipped application does not. Distribute third-party license notices with the binary; generate `dist/THIRD_PARTY_NOTICES.txt` with `bun run notices` after building.
-
-## Review UI
-
-- Logical review layers anchored to changed patch rows. A file and even one edit block can contribute to several layers. The model can combine ranges across files; exact range validation rejects invented or overlapping assignments and keeps unassigned edits in an additional layer. Generation uses bounded batches and calls; local groups remain available without AI.
-- A small shadcn sidebar for switching layers and files, with an accessible mobile drawer and extension-specific file icons. Layers and the file tree collapse independently; each has its own scroll area, and long layer lists leave space for the tree. Distinct Layers and Files headers have their collapse arrows on the right; full-width backgrounds and subtle horizontal borders separate the sections. The tree has no extra outer indentation; folder depth supplies its hierarchy. A/M/D/R markers identify added, modified, deleted, and renamed files. Layer hover tooltips are removed. Previous/next controls in the main header navigate layers even when their list is collapsed.
-- Pierre's file tree and syntax-highlighted split/unified diffs. Each layer opens directly to its changes. The diff pane is flat and compact, with sticky file headers, icon-based display controls, and immediate file jumps. Code rendering is limited to a window around the viewport to reduce DOM work on long patches. File headers remain available throughout the list.
-- Four selectable themes: GitHub dark/light and GitLab dark/light. The initial GitHub theme follows your system preference. All theme assets are local.
-- Each layer shows a short explanation in a bordered Markdown box above its diffs; All changes shows the whole PR summary. Lists, emphasis, inline code, code blocks, and tables are supported. Raw HTML and external images are not loaded.
-- Each file has a Reviewed checkbox. Checking it collapses the diff while retaining its file header. Reviewed state stays consistent across layers during the current browser session. You can expand a reviewed file without unchecking it.
-- File tree clicks scroll to the chosen file without hiding other files. Sidebar selection changes color while keeping the same font weight.
-- No branding, permanent chat, notes, or status dashboard in the review workspace.
-- Warnings when service responses omit file content or pagination is capped.
-
-## Search and keyboard navigation
-
-The search button, `Cmd/Ctrl+K`, `/`, or `?` opens search over loaded file paths, diff text, and layer summaries. Up to 100 results are displayed. Arrow keys select a result; Enter opens it and Escape closes search. Selecting a diff match opens All changes, expands the file, and highlights its source line while preserving the complete review. Search runs locally and makes no model calls.
-
-| Key | Action |
-| --- | --- |
-| `j` / `k` | Next / previous layer |
-| `l` / `h` | Next / previous file in the current view |
-| `u` | Toggle split/unified |
-| `[` | Toggle sidebar |
-| `Cmd/Ctrl+K`, `/`, `?` | Search |
-| `Esc` | Close search or symbol lookup |
-
-Letter shortcuts are ignored while typing or while a dialog is open. Native tree and dialog arrow navigation remain available.
-
-## Context and symbols
-
-For modified/renamed files, **Show nearby unchanged code** loads old/current text at the review's pinned commits and expands equal surrounding lines. Repeated clicks expand up to 200 extra lines; Reset context restores the compact patch. Expansion stops at other edits, so changes from another layer are not silently included. Layer views label their scope and show layer versus whole-file change counts when a file has additional edits; **View all file changes** switches to the complete PR and scrolls to that file. All displayed code comes from the original Git diff, not model-generated code. GitHub old content uses the compare API's merge base; GitLab uses its diff base. If that commit or file content is unavailable, context cannot be expanded. Binary/oversized files remain readable only through the available patch.
-
-**Alt-click a highlighted symbol**, or use the small symbol lookup button in a file header, to inspect definitions and references without leaving the page. Lookup searches the pinned PR head, prioritizing the current/changed files and nearby directories. It is a bounded text search with heuristic definition labels, not a language server or a complete repository index. The dialog reports searched/unavailable files and search limits, shows surrounding lines, and can jump back to changed files.
-
-Repository lookup scans at most 24 files and lists at most four directories per request. Symbol search reads are limited to 250,000 text characters and 512 KB of API response data. Context expansion uses raw file reads capped at 2 MB per side, supporting larger source files without base64 overhead. Oversized reads fail with an explanatory message instead of returning partial context. A cache of at most 24 entries and 8 million text characters lives only in process memory. Two concurrent UI lookup requests are allowed. Browser requests go to the local authenticated API; only the server contacts the configured Git service. No additional AI calls or services are involved.
-
-## Data handling
-
-The CLI service binds only to `127.0.0.1`. Its API requires a random session cookie, exchanged using the secret in the CLI's launch URL fragment. Mutation requests must have the same browser origin. The fragment is removed from browser history after authentication. The development preview script can explicitly bind to a Tailscale interface and accept an explicitly configured proxy origin; this does not change the CLI's default.
-
-Application requests go only to the selected Git service API and the explicitly configured model endpoint. Public GitHub uses `api.github.com`; GitHub Enterprise uses the selected host's `/api/v3`; GitLab uses its `/api/v4`. Redirects are rejected, including same-host redirects, so fix the configured URL rather than relying on a redirect. The application does not fetch links, images, or instructions from repository content. There is no telemetry, CDN, external font, cloud fallback, or update check. Opening the original review or token page navigates your browser to the Git host you selected.
-
-Credentials are stored **in plaintext** at `~/.change-stack/config.json`, with file mode `0600` on POSIX; the settings directory is created with mode `0700`. The editable `system-prompt.md` file also uses mode `0600`. Override the path with `CHANGE_STACK_CONFIG`. Windows requires an appropriate user-only filesystem ACL; POSIX mode bits do not provide equivalent access control there. OS keychain integration is not implemented. Delete `~/.change-stack/` to remove settings and saved credentials. If settings were migrated, also remove the old configuration file to erase its retained copy.
-
-Source patches, reviewed-file state, and analysis are held in process/browser memory. They are not written to a database or browser storage. Sidebar state is also held in memory. This application cannot control retention by your model endpoint, Git service, operating system, or browser. HTTPS and trusted corporate certificates are recommended; certificate verification is never disabled by this app. Configure corporate CAs through the runtime/OS trust mechanism available in your deployment.
-
-## Current limits
-
-This is a working first version, not full Change Stack parity. It reads supplied diffs and selected unchanged repository files; it does not clone repositories, build a full dependency graph, generate diagrams, synchronize discussions, publish comments, or approve/merge reviews. Model explanations are hypotheses for human review, not merge decisions. Very large patches are shortened for the model and explicitly identified. Layers are ordered within batches; the PR summary combines layer explanations and bounded repository context.
-
-The UI opens after fetch and explanation preparation; long reviews may take several model calls. Interrupted or failed batches retain their change ranges in unexplained groups. This implementation uses `/chat/completions` with standard non-streaming chat messages; endpoints requiring a different API need an adapter. Pierre Trees is pinned to a beta release. Hosted multiuser deployment is outside this version's scope.
-
-## Validate
-
-```sh
 bun run typecheck
 bun run test
 bun run build
+bun run test:tls
 bunx playwright install --with-deps chromium
 bun run test:ui
 ```
 
-Tests use local mock services for host isolation, redirect refusal, credential permissions, provider pagination, snapshot consistency, model grounding/fallback, and local session authentication.
+`bun run build` создаёт `dist/cstack` для текущей системы. Tailwind собирается в локальный CSS до запуска и компиляции, HTML / JS / стили включаются в бинарник. UI-проверка запускает бинарник вне каталога проекта и проверяет интерфейс, поиск, слои, темы, split resize, мобильный вид и отсутствие внешних запросов браузера. TLS-проверка запускает настоящий бинарник с временным HTTPS GitLab и проверяет принятие корпоративного CA и отказ неизвестному сертификату.
 
-The UI smoke check launches the compiled binary outside the project directory and checks the shadcn layout, layer navigation, both Pierre components, split/unified rendering, mobile navigation, and absence of external requests. Browser downloads are development tools, not part of the shipped binary. Use `CHANGE_STACK_CHROMIUM` to point the test at an existing compatible Chromium executable. Tailwind is compiled to a local stylesheet before development, tests, and executable builds; `bun run styles` generates it separately when needed.
+Подготовить macOS Intel архив локально, без публикации:
 
-UI comparison notes and scope: [Diffshub comparison](docs/ui-comparison.md), [CodeRabbit feature comparison](docs/change-stack-feature-comparison.md).
+```sh
+CHANGE_STACK_RELEASE_VERSION=v0.1.0 bun run build:release
+```
+
+Результат: `dist/cstack-v0.1.0-macos-x64.tar.gz` и `dist/SHA256SUMS`. На Linux выполняется cross-compilation; запустить macOS-бинарник там нельзя. На Intel macOS скрипт дополнительно проверяет исполняемый файл. Уведомления о лицензиях генерируются `bun run notices` и включаются в архив.
+
+## CI и выпуск версии
+
+Обычные push в `master` и pull request запускают [Checks](.github/workflows/ci.yml): типы, тесты, сборку, TLS и UI на Linux и macOS Intel. macOS-архив сохраняется как предварительный GitHub Actions artifact. Дополнительная job собирает контейнер и проверяет запуск и авторизацию. **На обычном push ничего не публикуется в Releases или GHCR.**
+
+[Release](.github/workflows/release.yml) запускается только на push тега `v*`:
+
+1. На `macos-15-intel` устанавливается Bun 1.3.14, выполняются проверки, собирается и проверяется macOS x64 архив.
+2. После успешной macOS job собирается и проверяется Linux amd64 контейнер, затем публикуется версия образа в GHCR.
+3. После обеих успешных сборок создаётся GitHub Release с macOS-архивом, README, лицензиями и контрольной суммой. В Releases нет отдельных Linux / Windows / ARM бинарников.
+
+Нужны разрешённые GitHub Actions в репозитории, `contents: write` для финальной публикации и `packages: write` для образа. Workflow использует встроенный `GITHUB_TOKEN`; ключи GitLab / модели в CI не нужны. Тесты используют фиктивные сервисы, а не корпоративный код. `--version` релизного бинарника берётся из тега. Теги с суффиксом, например `v0.1.0-rc.1`, создают prerelease. Образ получает точный тег версии, без изменения `latest`.
+
+**Тег создаётся и отправляется только после явного решения о релизе.** Пример для сопровождающего, не шаг установки для коллег:
+
+```sh
+git tag -a v0.1.0 -m 'Change Stack v0.1.0'
+git push origin v0.1.0
+```
+
+Готовый macOS файл скачивается из Assets созданного GitHub Release. Если release job не завершилась, файла ещё нет; посмотрите ошибку во вкладке Actions. Подпись Developer ID и нотарификация Apple пока не автоматизированы: для этого потребуются сертификат разработчика и соответствующие секреты CI.
+
+## Текущие границы продукта
+
+Приложение читает diff и выбранные файлы, но не строит полный граф зависимостей, не выполняет код репозитория, не публикует комментарии и не принимает / сливает PR. Объяснения модели нужно проверять самому. Большие изменения отправляются модели с ограничениями и предупреждениями. Слои упорядочены в пределах пакетов генерации.
+
+Подготовка ревью заканчивается до открытия UI. Нет автоматического отслеживания новых commit / комментариев, сохранения прогресса между запусками, общего многопользовательского доступа и полного CodeRabbit Change Stack parity. API модели должен поддерживать нестриминговый `/chat/completions`. Поиск символов ограниченный и эвристический.
+
+Дополнительные заметки разработчика: [сравнение интерфейса с Diffshub](docs/ui-comparison.md), [сравнение возможностей с Change Stack](docs/change-stack-feature-comparison.md).

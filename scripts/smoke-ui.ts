@@ -27,6 +27,30 @@ try {
   await expect(page.getByText('Change Stack', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Export notes' })).toHaveCount(0);
   await expect(page.getByTestId('file-diff')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Keyboard shortcuts', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('Next / previous layer');
+  await expect(page.getByRole('dialog')).toContainText('Resize split diff');
+  await page.keyboard.press('j');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: 'Previous layer' })).toBeDisabled();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  const divider = page.getByRole('separator', { name: /Resize split diff/ }).first();
+  await divider.focus(); await page.keyboard.press('ArrowRight');
+  await expect(divider).toHaveAttribute('aria-valuenow', '52');
+  const columns = await page.locator('diffs-container').first().evaluate(e => {
+    const split = e.shadowRoot!.querySelector('[data-diff-type=split][data-overflow=scroll]')!;
+    return getComputedStyle(split).gridTemplateColumns.split(' ').map(Number.parseFloat);
+  });
+  expect(columns[0]).toBeGreaterThan(columns[1]);
+  const dividerBounds = await divider.boundingBox();
+  await page.mouse.move(dividerBounds!.x + dividerBounds!.width / 2, dividerBounds!.y + 10);
+  await page.mouse.down(); await page.mouse.move(dividerBounds!.x + 100, dividerBounds!.y + 10); await page.mouse.up();
+  expect(Number(await divider.getAttribute('aria-valuenow'))).toBeGreaterThan(55);
+  await divider.focus(); await page.keyboard.press('Enter');
+  await expect(divider).toHaveAttribute('aria-valuenow', '50');
+  await page.getByRole('tab', { name: 'Unified' }).click();
+  await expect(page.getByRole('separator', { name: /Resize split diff/ })).toHaveCount(0);
+  await page.getByRole('tab', { name: 'Split' }).click();
   const treeHeight = await page.getByTestId('tree-panel').evaluate(e => e.getBoundingClientRect().height);
   await page.getByRole('button', { name: 'Layers', exact: true }).click();
   expect(await page.getByTestId('tree-panel').evaluate(e => e.getBoundingClientRect().height)).toBeGreaterThan(treeHeight);
@@ -59,7 +83,7 @@ try {
   }
   const toolbarIcons = await page.locator('[data-review-toolbar] svg').evaluateAll(elements =>
     elements.map(e => e.getBoundingClientRect()).filter(r => r.width > 0).map(r => [r.width, r.height]));
-  expect(toolbarIcons.length).toBe(7);
+  expect(toolbarIcons.length).toBe(8);
   for (const dimensions of toolbarIcons) expect(dimensions).toEqual([16, 16]);
   const headingBottom = await page.getByRole('button', { name: 'Layers', exact: true }).evaluate(e => e.getBoundingClientRect().bottom);
   expect(await page.getByTestId('layers-panel').evaluate(e => e.getBoundingClientRect().top)).toBe(headingBottom + 1);
@@ -120,6 +144,7 @@ try {
     await page.getByRole('combobox', { name: 'Theme' }).click();
     await page.getByRole('option', { name: label, exact: true }).click();
     await expect(page.locator('html')).toHaveAttribute('data-theme', id!);
+    expect(await page.evaluate(() => localStorage.getItem('change-stack.theme'))).toBe(id!);
     await expect(page.locator('diffs-container').first()).toBeAttached();
   }
   if (errors.length) throw new Error(`Browser errors: ${errors.join('; ')}`);
@@ -192,6 +217,9 @@ try {
   for (const status of ['modified', 'added', 'deleted', 'renamed']) await expect(page.locator('.file-tree').getByTitle(`Git status: ${status}`).first()).toBeVisible();
   await page.screenshot({ path: 'dist/demo-layers-scrolled.png', fullPage: true });
   await page.unroute('**/api/review');
+  const savedTheme = await page.locator('html').getAttribute('data-theme');
+  await page.reload(); await expect(page.getByTestId('layer-button').first()).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', savedTheme!);
   const sharedPath = 'src/shared.ts';
   await page.route('**/api/review', async route => {
     const response = await route.fetch(), session = await response.json();
@@ -214,8 +242,11 @@ try {
   await expect(page.getByTestId('layer-button')).toHaveCount(2);
   await expect(page.getByTestId('diff-scope')).toContainText('only changes assigned to this layer');
   await expect(page.getByTestId('file-scope')).toContainText('Layer: +1 −1 · Whole file: +2 −1 · Also changed in 1 other layer');
+  await expect(page.getByTestId('file-tools')).toHaveCount(1);
+  await expect(page.getByTestId('file-tools')).toContainText('Nearby code');
   await page.getByRole('button', { name: 'View all file changes' }).click();
   await expect(page.getByTestId('pr-summary')).toBeAttached();
+  await expect(page.getByTestId('pr-statistics')).toContainText('files');
   await expect(page.locator('diffs-container').getByText('log();', { exact: true })).toBeVisible();
   await page.getByTestId('layer-button').first().click();
   await expect(page.locator('diffs-container').getByText('newName();', { exact: true })).toBeVisible();

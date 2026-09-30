@@ -164,3 +164,17 @@
 
 /* Keep toolbar glyphs consistent across Button, Select and Tabs primitives. */
 [data-review-toolbar] svg { width: 16px; height: 16px; flex-shrink: 0; stroke-width: 2; }
+
+.split-divider::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 1px;
+  margin-inline: auto;
+  background: var(--border);
+}
+.split-divider:hover::before,
+.split-divider:focus-visible::before {
+  width: 3px;
+  background: var(--ring);
+}

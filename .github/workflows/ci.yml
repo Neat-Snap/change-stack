@@ -1,0 +1,46 @@
+name: Checks
+on:
+  push:
+    branches: [master]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run test
+      - run: bun run build
+      - run: bun run test:tls
+      - run: bunx playwright install --with-deps chromium
+      - run: bun run test:ui
+      - if: runner.os == 'macOS'
+        run: bun run build:release
+      - if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-intel-preview
+          path: |
+            dist/cstack-*-macos-x64.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+  container:
+    needs: validate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t change-stack:test .
+      - run: bash scripts/smoke-container.sh change-stack:test
