@@ -1,6 +1,7 @@
 import { rootCertificates } from 'node:tls';
 import { readFile } from 'node:fs/promises';
 import { serviceUrl } from './target';
+import { ServiceError } from './diagnostics';
 
 let extraCA: { path: string; certificates: Promise<string[]> } | undefined;
 async function trustedCertificates(): Promise<string[] | undefined> {
@@ -23,7 +24,22 @@ export async function serviceFetch(url: string, allowedOrigin: string, init: Req
   const response = await fetch(target, { ...init, tls: { rejectUnauthorized: true, ca: await trustedCertificates() }, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
   if (!response.ok) {
     // Response bodies can contain code, credentials, or reverse-proxy details. Do not log them.
-    throw new Error(`Service returned HTTP ${response.status}. ${response.status === 401 || response.status === 403 ? 'Check your token and access permissions.' : 'Check the service URL and retry.'}`);
+    let details: any;
+    const reader = response.body?.getReader();
+    if (reader) {
+      try {
+        const decoder = new TextDecoder(); let text = '', size = 0;
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) { text += decoder.decode(); details = JSON.parse(text); break; }
+          size += value.length;
+          if (size > 16_384) break;
+          text += decoder.decode(value, { stream: true });
+        }
+      } catch { /* Only known error codes and parameter names may leave this function. */ }
+      finally { await reader.cancel().catch(() => {}); }
+    }
+    throw new ServiceError(response.status, details?.error?.param, details?.error?.code);
   }
   return response;
 }

@@ -1,6 +1,7 @@
 import { changeUnits, wholeRanges, type ChangeUnit } from './changes';
 import { serviceJson } from './network';
 import { serviceUrl } from './target';
+import { diagnose, diagnosticReason, ModelError } from './diagnostics';
 import type { RepositoryReader, RepositoryRequest } from './repository';
 import type { AIConfig, Analysis, Layer, LayerGroup, LayerPart, Review } from './types';
 
@@ -31,19 +32,19 @@ function rowRange(range: any): { changeId: unknown; start: number; end: number }
 
 export function validateRangeLayers(value: unknown, units: ChangeUnit[], idPrefix: string): { summary: string; layers: Layer[] } {
   const result = value as any;
-  if (!result || typeof result.summary !== 'string' || !Array.isArray(result.layers) || result.layers.length > 50) throw new Error('Invalid layer structure.');
+  if (!result || typeof result.summary !== 'string' || !Array.isArray(result.layers) || result.layers.length > 50) throw new ModelError('Invalid layer structure.');
   const allowed = new Map(units.map(u => [u.id, u]));
   const owners = new Map<string, Map<number, number>>();
   const layers: Layer[] = result.layers.map((layer: any, index: number) => {
     if (typeof layer.title !== 'string' || typeof layer.summary !== 'string' || !Array.isArray(layer.ranges) || layer.ranges.length > 2000
-      || (layer.category !== undefined && typeof layer.category !== 'string')) throw new Error('Invalid layer.');
+      || (layer.category !== undefined && typeof layer.category !== 'string')) throw new ModelError('Invalid layer.');
     const ranges = layer.ranges.map(rowRange);
     for (const range of ranges) {
       const unit = allowed.get(range.changeId as string);
-      if (!unit || !Number.isInteger(range.start) || !Number.isInteger(range.end) || range.start < 1 || range.end < range.start || range.end > unit.lines.length) throw new Error('Invalid source range.');
+      if (!unit || !Number.isInteger(range.start) || !Number.isInteger(range.end) || range.start < 1 || range.end < range.start || range.end > unit.lines.length) throw new ModelError('Invalid source range.');
       const rows = owners.get(unit.id) ?? new Map<number, number>();
       for (let i = range.start; i <= range.end; i++) {
-        if (rows.has(i)) throw new Error('Overlapping source ranges.');
+        if (rows.has(i)) throw new ModelError('Overlapping source ranges.');
         rows.set(i, index);
       }
       owners.set(unit.id, rows);
@@ -73,32 +74,51 @@ export function validateRangeLayers(value: unknown, units: ChangeUnit[], idPrefi
 
 function bounded(value: number | undefined, fallback: number, min: number, max: number): number {
   const n = value ?? fallback;
-  if (!Number.isInteger(n) || n < min || n > max) throw new Error('Invalid model budget.');
+  if (!Number.isInteger(n) || n < min || n > max) throw new ModelError('Invalid model budget.');
   return n;
 }
 
+let modelRequestNumber = 0;
 export async function complete(ai: AIConfig, user: string, json = false): Promise<string> {
   const inputLimit = bounded(ai.maxContextChars, MAX_CONTEXT, 8_000, 200_000);
   const outputLimit = bounded(ai.maxOutputTokens, ai.reasoningEffort ? 16_000 : json ? 3_000 : 1_500, 1_000, 32_000);
   const base = serviceUrl(ai.baseUrl).toString().replace(/\/$/, '');
   const openRouter = new URL(base).hostname === 'openrouter.ai';
-  const response = await serviceJson<any>(`${base}/chat/completions`, new URL(base).origin, {
-    method: 'POST', headers: { Authorization: `Bearer ${ai.apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: ai.model, messages: [{ role: 'system', content: systemPrompt(ai) }, { role: 'user', content: user.slice(0, inputLimit) }],
-      stream: false, max_tokens: outputLimit,
-      ...(ai.reasoningEffort ? openRouter ? { reasoning: { effort: ai.reasoningEffort, exclude: true } }
-        : { reasoning_effort: ai.reasoningEffort } : { temperature: 0.2 }),
-      ...(json ? { response_format: { type: 'json_object' } } : {}),
-      ...(ai.serviceTier ? { service_tier: ai.serviceTier } : {}),
-      ...(openRouter && ai.serviceTier ? { provider: { only: ['OpenAI'], allow_fallbacks: false } } : {}),
-    }),
-  }, ai.serviceTier === 'flex' ? 600_000 : 120_000);
-  if (ai.serviceTier && response.service_tier !== ai.serviceTier) {
-    throw new Error('The model endpoint did not confirm the requested processing tier.');
+  const stage = `model.request.${++modelRequestNumber}`;
+  const started = performance.now();
+  diagnose({ stage: `${stage}.started`, origin: new URL(base).origin, model: ai.model, inputChars: Math.min(user.length, inputLimit),
+    maxOutputTokens: outputLimit, json: json && ai.jsonMode !== false, reasoningEffort: ai.reasoningEffort, serviceTier: ai.serviceTier });
+  try {
+    const headers = new Headers(ai.customHeaders);
+    headers.set('Authorization', `Bearer ${ai.apiKey}`);
+    headers.set('Content-Type', 'application/json');
+    const response = await serviceJson<any>(`${base}/chat/completions`, new URL(base).origin, {
+      method: 'POST', headers,
+      body: JSON.stringify({ ...ai.extraBody, model: ai.model, messages: [{ role: 'system', content: systemPrompt(ai) }, { role: 'user', content: user.slice(0, inputLimit) }],
+        stream: false, max_tokens: outputLimit,
+        ...(ai.reasoningEffort ? openRouter ? { reasoning: { effort: ai.reasoningEffort, exclude: true } }
+          : { reasoning_effort: ai.reasoningEffort } : ai.extraBody?.reasoning_effort || ai.extraBody?.reasoning ? {} : { temperature: 0.2 }),
+        ...(ai.temperature !== undefined ? { temperature: ai.temperature } : {}),
+        ...(json && ai.jsonMode !== false ? { response_format: { type: 'json_object' } } : {}),
+        ...(ai.serviceTier ? { service_tier: ai.serviceTier } : {}),
+        ...(openRouter && ai.serviceTier ? { provider: { only: ['OpenAI'], allow_fallbacks: false } } : {}),
+      }),
+    }, ai.timeoutMs ?? (ai.serviceTier === 'flex' ? 600_000 : 120_000));
+    if (ai.serviceTier && response.service_tier !== ai.serviceTier) {
+      throw new ModelError('The model endpoint did not confirm the requested processing tier.');
+    }
+    const finish = response.choices?.[0]?.finish_reason;
+    if (finish === 'length') throw new ModelError('The model reached its output-token limit. Increase --max-output-tokens.');
+    if (finish === 'content_filter') throw new ModelError('The model response was blocked by its content filter.');
+    const content = response.choices?.[0]?.message?.content;
+    if (typeof content !== 'string' || !content.trim()) throw new ModelError('The model endpoint did not return a chat completion.');
+    diagnose({ stage: `${stage}.completed`, elapsedMs: Math.round(performance.now() - started),
+      finishReason: ['stop', 'tool_calls', 'function_call'].includes(finish) ? finish : undefined });
+    return content;
+  } catch (error) {
+    diagnose({ stage: `${stage}.failed`, elapsedMs: Math.round(performance.now() - started), error: diagnosticReason(error) });
+    throw error;
   }
-  const content = response.choices?.[0]?.message?.content;
-  if (typeof content !== 'string' || !content.trim()) throw new Error('The model endpoint did not return a chat completion.');
-  return content;
 }
 
 export async function analyze(review: Review, ai: AIConfig, repository?: RepositoryReader): Promise<Analysis> {
@@ -125,12 +145,15 @@ export async function analyze(review: Review, ai: AIConfig, repository?: Reposit
 Review data:
 ${JSON.stringify({ title: review.title.slice(0, 500), description: review.description.slice(0, 1000), changes: context })}`;
     try {
-      if (index >= 12 || prompt.length > contextLimit) throw new Error('Layer model budget exhausted.');
+      if (index >= 12) throw new ModelError('The 12-batch model budget was reached.');
+      if (prompt.length > contextLimit) throw new ModelError('This batch exceeds the input budget. Increase --max-context-chars.');
       const raw = (await complete(ai, prompt, true)).trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
       const parsed = validateRangeLayers(JSON.parse(raw), units, `batch-${index}`);
       summaries.push(parsed.summary); layers.push(...parsed.layers);
-    } catch {
-      warnings.push(`Batch ${index + 1} could not be explained by the model. Its changes remain available in local groups.`);
+    } catch (error) {
+      const reason = diagnosticReason(error);
+      diagnose({ stage: `layers.batch.${index + 1}.failed`, error: reason });
+      warnings.push(`Batch ${index + 1} could not be explained by the model. ${reason} Its changes remain available in local groups.`);
       const paths = [...new Set(units.map(u => u.path))];
       layers.push({ id: `fallback-${index}`, title: 'Additional changes', summary: 'These changes have no model explanation.', files: paths,
         ranges: units.map(u => ({ changeId: u.id, start: 1, end: u.lines.length })) });
@@ -141,7 +164,7 @@ ${JSON.stringify({ title: review.title.slice(0, 500), description: review.descri
   let ordered = layers, groups: LayerGroup[] | undefined;
   if (summaries.length && layers.length > 1) {
     try { ({ layers: ordered, groups } = validateOrganization(parseJson(await complete(ai, organizePrompt(layers), true)), layers)); }
-    catch { warnings.push('Layer order, groups, and dependencies could not be prepared. Layers are shown in batch order.'); }
+    catch (error) { diagnose({ stage: 'layers.order.failed', error: diagnosticReason(error) }); warnings.push(`Layer order, groups, and dependencies could not be prepared. ${diagnosticReason(error)} Layers are shown in batch order.`); }
   }
   const unitsById = new Map(allUnits.map(u => [u.id, u]));
   const candidates = summaries.length ? ordered.filter(l => !/^fallback-|-remaining$/.test(l.id) && rowCount(l) >= 10)
@@ -149,12 +172,12 @@ ${JSON.stringify({ title: review.title.slice(0, 500), description: review.descri
   let failed = 0;
   const [parts] = await Promise.all([
     mapLimit(candidates, 4, async layer => {
-      try { return await breakDownLayer(ai, review, layer, unitsById, contextLimit); } catch { failed++; return []; }
+      try { return await breakDownLayer(ai, review, layer, unitsById, contextLimit); } catch (error) { diagnose({ stage: 'layers.parts.failed', error: diagnosticReason(error) }); failed++; return []; }
     }),
     (async () => {
       if (!repository || !summaries.length) return;
       try { summary = await summarizeRepository(review, ai, layers, repository); }
-      catch { warnings.push('Repository summary could not be completed. Showing the summaries of the changes instead.'); }
+      catch (error) { diagnose({ stage: 'repository.summary.failed', error: diagnosticReason(error) }); warnings.push(`Repository summary could not be completed. ${diagnosticReason(error)} Showing the summaries of the changes instead.`); }
     })(),
   ]);
   if (failed) warnings.push(`${failed} layer breakdown${failed === 1 ? '' : 's'} could not be prepared. Those layers show their summary only.`);
@@ -231,7 +254,7 @@ Layer: ${JSON.stringify({ title: layer.title, summary: layer.summary.slice(0, 15
 
 export function validateParts(value: unknown, layer: Layer): LayerPart[] {
   const result = value as any;
-  if (!Array.isArray(result?.parts) || result.parts.length > 8) throw new Error('Invalid parts.');
+  if (!Array.isArray(result?.parts) || result.parts.length > 8) throw new ModelError('Invalid parts.');
   const allowed = new Map<string, Set<number>>(), used = new Map<string, Set<number>>();
   for (const range of layer.ranges ?? []) {
     const rows = allowed.get(range.changeId) ?? new Set<number>();
@@ -239,13 +262,13 @@ export function validateParts(value: unknown, layer: Layer): LayerPart[] {
     allowed.set(range.changeId, rows);
   }
   const parts: LayerPart[] = result.parts.map((part: any) => {
-    if (typeof part?.title !== 'string' || !part.title.trim() || typeof part.summary !== 'string' || !Array.isArray(part.ranges) || !part.ranges.length || part.ranges.length > 200) throw new Error('Invalid part.');
+    if (typeof part?.title !== 'string' || !part.title.trim() || typeof part.summary !== 'string' || !Array.isArray(part.ranges) || !part.ranges.length || part.ranges.length > 200) throw new ModelError('Invalid part.');
     part.ranges = part.ranges.map(rowRange);
     for (const range of part.ranges) {
       const rows = allowed.get(range.changeId), taken = used.get(range.changeId) ?? new Set<number>();
-      if (!rows || !Number.isInteger(range.start) || !Number.isInteger(range.end) || range.end < range.start || range.end - range.start > 5000) throw new Error('Invalid part range.');
+      if (!rows || !Number.isInteger(range.start) || !Number.isInteger(range.end) || range.end < range.start || range.end - range.start > 5000) throw new ModelError('Invalid part range.');
       for (let i = range.start; i <= range.end; i++) {
-        if (!rows.has(i) || taken.has(i)) throw new Error('Part range is outside the layer or overlaps another part.');
+        if (!rows.has(i) || taken.has(i)) throw new ModelError('Part range is outside the layer or overlaps another part.');
         taken.add(i);
       }
       used.set(range.changeId, taken);
@@ -271,7 +294,7 @@ export async function summarizeRepository(review: Review, ai: AIConfig, layers: 
   for (let round = 0; round < 2 && calls < maxTools && evidenceSize < limit - overviewLimit - 4_000; round++) {
     let plan;
     try { plan = JSON.parse((await complete(ai, `Choose useful read-only repository tool calls to understand this PR. Tools: list_files(path, page?) lists one directory (root path is ""); read_file(path) reads a text file at the PR head commit. Return only JSON {"requests":[{"tool":"list_files"|"read_file","path":"...","page":1}]}. You may request at most ${maxTools - calls} calls, or no calls if you have enough evidence. No other tools exist.\nPR evidence (may be shortened): ${context}\nTool results: ${JSON.stringify(evidence)}`, true)).trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '')); }
-    catch { break; }
+    catch (error) { diagnose({ stage: 'repository.planning.failed', error: diagnosticReason(error) }); break; }
     if (!Array.isArray(plan?.requests)) break;
     if (!plan.requests.length) break;
     for (const request of plan.requests.slice(0, maxTools - calls) as RepositoryRequest[]) {
@@ -288,14 +311,14 @@ export async function summarizeRepository(review: Review, ai: AIConfig, layers: 
   }
   // No tool requests can be executed from this final response, even if the model asks for more.
   const final = JSON.parse((await complete(ai, `Repository exploration has ended. Produce the final short summary of the whole PR, in 3–5 simple sentences. Explain the main change, its purpose, and any important uncertainty. Do not list every file. Return only JSON {"summary":"..."}. You cannot call any more tools. You inspected only a bounded sample of repository context, not the entire repo. Do not claim otherwise. Overview truncated: ${overviewTruncated}. Tool calls used: ${calls}/${maxTools}.\nPR evidence: ${context}\nTool results: ${JSON.stringify(evidence)}`, true)).trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, ''));
-  if (typeof final.summary !== 'string' || !final.summary.trim()) throw new Error('Invalid PR summary.');
+  if (typeof final.summary !== 'string' || !final.summary.trim()) throw new ModelError('Invalid PR summary.');
   return final.summary.slice(0, 3_000);
 }
 
 export async function ask(review: Review, ai: AIConfig, question: string, paths: string[]): Promise<string> {
-  if (!question.trim() || question.length > 4_000) throw new Error('Enter a question of at most 4,000 characters.');
+  if (!question.trim() || question.length > 4_000) throw new ModelError('Enter a question of at most 4,000 characters.');
   const chosen = review.files.filter(f => paths.includes(f.path));
-  if (!chosen.length) throw new Error('Select a file or layer to ask about.');
+  if (!chosen.length) throw new ModelError('Select a file or layer to ask about.');
   let remaining = MAX_CONTEXT;
   const files = chosen.map(f => { const patch = f.patch.slice(0, Math.max(0, remaining)); remaining -= patch.length;
     return { path: f.path, patch, incomplete: f.incomplete || patch.length < f.patch.length }; });
