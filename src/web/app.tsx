@@ -2,7 +2,7 @@ import React, { Component, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { PatchDiff } from '@pierre/diffs/react';
 import { FileTree, useFileTree } from '@pierre/trees/react';
-import { Files, TriangleAlert } from 'lucide-react';
+import { ChevronRight, Files, TriangleAlert } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { themes, type ReviewTheme } from './themes';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -15,7 +15,9 @@ import {
   SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem,
   SidebarProvider, SidebarRail, SidebarTrigger, useSidebar,
 } from '@/components/ui/sidebar';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Summary } from './summary';
 import type { ChangedFile, Session } from '../core/types';
 import './generated.css';
 
@@ -40,7 +42,7 @@ function Tree({ files, select }: { files: ChangedFile[]; select: (path: string) 
       const path = paths.at(-1);
       if (path && files.some(file => file.path === path)) select(path);
     },
-    icons: { set: 'minimal' },
+    icons: { set: 'complete' },
   });
   return <FileTree model={model} className="file-tree" style={{ height: '100%' }} onClick={event => {
     // A selected file can be clicked again after the reviewer scrolls elsewhere.
@@ -65,6 +67,8 @@ function ReviewWorkspace({ session }: { session: Session }) {
   const [activeLayer, setActiveLayer] = useState<string>(analysis.layers[0]?.id ?? 'all');
   const sections = useRef(new Map<string, HTMLElement>());
   const summary = useRef<HTMLDivElement>(null);
+  const [reviewed, setReviewed] = useState(() => new Set<string>());
+  const [collapsed, setCollapsed] = useState(() => new Set<string>());
   const [layout, setLayout] = useState<'split' | 'unified'>('split');
   const { isMobile, setOpenMobile } = useSidebar();
   const layer = analysis.layers.find(layer => layer.id === activeLayer);
@@ -88,6 +92,14 @@ function ReviewWorkspace({ session }: { session: Session }) {
     if (isMobile) setOpenMobile(false);
   }
 
+  function setFileCollapsed(path: string, value: boolean) {
+    setCollapsed(previous => { const next = new Set(previous); if (value) next.add(path); else next.delete(path); return next; });
+  }
+  function markReviewed(path: string, value: boolean) {
+    setReviewed(previous => { const next = new Set(previous); if (value) next.add(path); else next.delete(path); return next; });
+    setFileCollapsed(path, value);
+  }
+
   return <>
     <Sidebar collapsible="offcanvas" className="border-r">
       <SidebarHeader className="px-3 pb-2 pt-4">
@@ -103,13 +115,11 @@ function ReviewWorkspace({ session }: { session: Session }) {
           <SidebarGroupLabel className="mb-1 text-xs font-normal text-muted-foreground">Layers</SidebarGroupLabel>
           <SidebarGroupContent><SidebarMenu className="gap-1" aria-label="Review layers">
             {analysis.layers.map((layer, index) => <SidebarMenuItem key={layer.id}>
-              <Tooltip><TooltipTrigger asChild>
                 <SidebarMenuButton isActive={activeLayer === layer.id} onClick={() => chooseLayer(layer.id)}
                   className="h-auto min-h-10 items-start gap-3 py-2.5" data-testid="layer-button">
                   <span className="mt-0.5 w-3 shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">{index + 1}</span>
                   <span className="whitespace-normal! overflow-visible! text-[13px] leading-5">{layer.title}</span>
                 </SidebarMenuButton>
-              </TooltipTrigger><TooltipContent side="right" className="max-w-80 text-xs leading-relaxed">{layer.summary}</TooltipContent></Tooltip>
             </SidebarMenuItem>)}
           </SidebarMenu></SidebarGroupContent>
         </SidebarGroup>
@@ -137,18 +147,33 @@ function ReviewWorkspace({ session }: { session: Session }) {
       </header>
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-4 p-3 sm:space-y-5 sm:p-5">
-          <div ref={summary} className="max-w-3xl scroll-mt-5 py-2" data-testid={layer ? 'layer-summary' : 'pr-summary'}>
-            <p className="whitespace-pre-line text-sm leading-6 text-muted-foreground">{layer?.summary ?? analysis.summary}</p>
+          <div ref={summary} className="scroll-mt-5 rounded-lg border bg-sidebar/40 p-4 sm:p-5" data-testid={layer ? 'layer-summary' : 'pr-summary'}>
+            <Summary text={layer?.summary ?? analysis.summary} />
           </div>
           {warnings.map((warning, index) => <Alert key={index} className="text-muted-foreground"><TriangleAlert className="size-4" />
             <AlertDescription>{warning}</AlertDescription></Alert>)}
           {files.map(file => <section ref={element => { if (element) sections.current.set(file.path, element); else sections.current.delete(file.path); }} key={file.path} aria-label={file.path} className="diff-container scroll-mt-5 overflow-hidden rounded-lg border bg-background" data-testid="file-diff">
+            <Collapsible open={!collapsed.has(file.path)} onOpenChange={open => setFileCollapsed(file.path, !open)}>
+              <div className="flex min-h-11 items-center gap-3 bg-sidebar/60 px-3">
+                <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-2 py-3 text-left text-xs" aria-label={`${collapsed.has(file.path) ? 'Expand' : 'Collapse'} ${file.path}`}>
+                  <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${collapsed.has(file.path) ? '' : 'rotate-90'}`} />
+                  <span className="truncate font-mono">{file.path}</span>
+                </CollapsibleTrigger>
+                <span className="hidden shrink-0 font-mono text-[11px] tabular-nums sm:inline"><span className="text-green-600 dark:text-green-400">+{file.additions}</span> <span className="text-red-600 dark:text-red-400">−{file.deletions}</span></span>
+                <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+                  <Checkbox checked={reviewed.has(file.path)} onCheckedChange={checked => markReviewed(file.path, checked === true)} aria-label={`Mark ${file.path} as reviewed`} />
+                  <span className="hidden sm:inline">Reviewed</span>
+                </label>
+              </div>
+              <CollapsibleContent className="border-t" data-testid="file-diff-content">
             {file.incomplete && <div className="border-b px-4 py-3 text-xs text-muted-foreground">{file.path}: this patch is incomplete.</div>}
             {file.patch ? <DiffBoundary key={file.path} patch={file.patch}>
               <PatchDiff patch={file.patch} options={{ theme,
                 themeType: dark ? 'dark' : 'light', diffStyle: layout, preferredHighlighter: 'shiki-js',
-                enableLineSelection: true }} />
+                enableLineSelection: true, disableFileHeader: true }} />
             </DiffBoundary> : <div className="p-4 text-sm text-muted-foreground">{file.path} · No text patch available.</div>}
+              </CollapsibleContent>
+            </Collapsible>
           </section>)}
           {!files.length && <p className="p-5 text-sm text-muted-foreground">No changes to display.</p>}
         </div>

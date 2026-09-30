@@ -2,7 +2,7 @@ import { chromium, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
-const child = Bun.spawn([resolve('dist/change-stack'), '--demo', '--no-open'], { stdout: 'pipe', stderr: 'pipe', cwd: tmpdir() });
+const child = Bun.spawn([resolve('dist/cstack'), '--demo', '--no-open'], { stdout: 'pipe', stderr: 'pipe', cwd: tmpdir() });
 const reader = child.stdout.getReader();
 let output = '';
 let browser;
@@ -33,6 +33,21 @@ try {
   expect(await page.getByTestId('layer-button').nth(1).evaluate(e => getComputedStyle(e).fontWeight)).toBe(fontBefore);
   await expect(page.getByTestId('layer-summary')).toContainText('Adds error state');
   await expect(page.getByTestId('file-diff')).toHaveCount(1);
+  await page.getByTestId('layer-button').nth(1).hover();
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
+  await expect(page.getByTestId('layer-summary').locator('ul li')).toHaveCount(2);
+  await expect(page.getByTestId('layer-summary').locator('code')).toContainText('sendInvitation');
+  await page.getByRole('checkbox', { name: 'Mark src/components/InviteForm.tsx as reviewed', exact: true }).check();
+  await expect(page.locator('[data-testid="file-diff-content"]:visible')).toHaveCount(0);
+  await expect(page.getByTestId('file-diff')).toHaveCount(1);
+  await page.getByRole('button', { name: /All changes/ }).click();
+  await expect(page.getByRole('checkbox', { name: 'Mark src/components/InviteForm.tsx as reviewed', exact: true })).toBeChecked();
+  await expect(page.getByTestId('file-diff')).toHaveCount(4);
+  await expect(page.locator('[data-testid="file-diff-content"]:visible')).toHaveCount(3);
+  await page.getByRole('button', { name: 'Expand src/components/InviteForm.tsx', exact: true }).click();
+  await expect(page.locator('[data-testid="file-diff-content"]:visible')).toHaveCount(4);
+  await page.getByRole('checkbox', { name: 'Mark src/components/InviteForm.tsx as reviewed', exact: true }).uncheck();
+  await page.getByTestId('layer-button').nth(1).click();
   await expect(page.getByRole('region', { name: 'src/components/InviteForm.tsx' })).toBeVisible();
   // A fresh launch link must reinitialize an already-open review tab.
   await page.evaluate(hash => { location.hash = hash; }, new URL(url).hash);

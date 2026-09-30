@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { configPath, loadConfig, saveConfig } from '../src/core/config';
+import { configPath, loadConfig, promptPath, saveConfig } from '../src/core/config';
 import { gitApiBase, parseTarget, tokenCreationUrl } from '../src/core/target';
 import { serviceFetch } from '../src/core/network';
 import { fetchReview, makePatch } from '../src/core/providers';
@@ -37,7 +37,7 @@ describe('URL routing and authentication', () => {
       const path = join(dir, 'config.json');
       expect(await loadConfig(path)).toEqual({ version: 1, hosts: {} });
       const config = { version: 1 as const, hosts: { 'https://git.company': { provider: 'gitlab' as const, baseUrl: 'https://git.company', token: 'test-token' } } };
-      await saveConfig(config, path); expect(await loadConfig(path)).toEqual(config);
+      await saveConfig(config, path); expect(await loadConfig(path)).toEqual({ ...config, defaultLanguage: 'en' });
       if (process.platform !== 'win32') expect((await stat(path)).mode & 0o777).toBe(0o600);
       expect(configPath()).toBeTruthy();
     } finally { await rm(dir, { recursive: true }); }
@@ -198,5 +198,33 @@ describe('Repository context budgets and explanation settings', () => {
     const read = repositoryReader({ ...demoSession().review, target: parseTarget(`${origin}/team/repo/-/merge_requests/1`), repository: '42', headSha: 'head' }, { provider: 'gitlab', baseUrl: origin, token: 'test' });
     expect((await read({ tool: 'list_files', path: 'src' }) as any).entries[0].path).toBe('src/a.ts');
     expect((await read({ tool: 'read_file', path: 'src/a.ts' }) as any).content).toBe('text');
+  });
+});
+
+
+describe('Coherent settings and default language', () => {
+  test('stores the editable prompt separately and preserves edits when saving preferences', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cstack-settings-'));
+    const path = join(dir, 'config.json');
+    try {
+      await saveConfig({ version: 1, hosts: {}, defaultLanguage: 'ru', ai: { baseUrl: 'https://internal.test/v1', model: 'test', apiKey: 'test-key', systemPrompt: 'Use simple words.' } }, path);
+      const stored = JSON.parse(await readFile(path, 'utf8'));
+      expect(stored.ai.apiKey).toBe('test-key'); expect(stored.ai.systemPrompt).toBeUndefined(); expect(stored.defaultLanguage).toBe('ru');
+      expect(await readFile(promptPath(path), 'utf8')).toContain('Use simple words.');
+      await writeFile(promptPath(path), 'My edited prompt.');
+      const loaded = await loadConfig(path); expect(loaded.ai?.systemPrompt).toBe('My edited prompt.'); expect(loaded.ai?.language).toBe('ru');
+      loaded.defaultLanguage = 'en'; await saveConfig(loaded, path);
+      expect((await loadConfig(path)).ai?.systemPrompt).toBe('My edited prompt.'); expect((await loadConfig(path)).ai?.language).toBe('en');
+      expect((await stat(promptPath(path))).mode & 0o777).toBe(0o600);
+    } finally { await rm(dir, { recursive: true }); }
+  });
+  test('default language can be saved without a PR or model credentials', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cstack-language-'));
+    const path = join(dir, 'config.json');
+    try {
+      const child = Bun.spawn([process.execPath, 'src/cli.ts', '--default-language', 'ru'], { env: { ...process.env, CHANGE_STACK_CONFIG: path }, stdout: 'ignore', stderr: 'ignore' });
+      expect(await child.exited).toBe(0); expect((await loadConfig(path)).defaultLanguage).toBe('ru');
+      expect(await readFile(promptPath(path), 'utf8')).toContain('simple');
+    } finally { await rm(dir, { recursive: true }); }
   });
 });

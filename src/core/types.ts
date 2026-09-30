@@ -23,7 +23,7 @@ export interface AIConfig {
   maxContextChars?: number;
   maxOutputTokens?: number;
 }
-export interface Config { version: 1; hosts: Record<string, HostConfig>; ai?: AIConfig; aiSetupSkipped?: boolean }
+export interface Config { version: 1; hosts: Record<string, HostConfig>; ai?: AIConfig; aiSetupSkipped?: boolean; defaultLanguage?: 'en' | 'ru' }
 export interface ChangedFile {
   path: string;
   oldPath: string;

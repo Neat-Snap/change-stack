@@ -17,7 +17,7 @@ export function demoSession(): Session {
     author: 'alex', sourceBranch: 'fix/invitation-expiry', targetBranch: 'main', headSha: 'c5e3a1498fbb', files, warnings: [] };
   return { review, aiEnabled: false, demo: true, analysis: { ...localAnalysis(review), layers: [
     { id: 'demo-api', title: 'Invitation acceptance', summary: 'Adds expiry validation before creating a member and marks the invitation as accepted. The route also rejects non-string tokens.', files: files.slice(0, 2).map(f => f.path), questions: ['Could two concurrent requests accept the same invitation?', 'Does membership creation and marking acceptance happen atomically?'] },
-    { id: 'demo-ui', title: 'Feedback in the invitation form', summary: 'Adds error state and an accessible alert. Check how sendInvitation populates that state; its implementation is outside this patch.', files: [files[2]!.path], questions: ['Is the entered email preserved after a failed request?'] },
+    { id: 'demo-ui', title: 'Feedback in the invitation form', summary: 'Adds error state and an accessible alert.\n\n- Keep the entered email after a failed request.\n- Check how `sendInvitation` fills the error state; its code is outside this patch.', files: [files[2]!.path], questions: ['Is the entered email preserved after a failed request?'] },
     { id: 'demo-tests', title: 'Expiry regression coverage', summary: 'Adds a test asserting an expired invitation cannot create a member.', files: [files[3]!.path], questions: ['Is an invitation expiring exactly now covered?'] },
   ] } };
 }

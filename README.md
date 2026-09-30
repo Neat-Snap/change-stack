@@ -1,4 +1,4 @@
-# Change Stack Local
+# Change Stack
 
 A minimal local review workspace for GitLab (including self-hosted instances) and GitHub (including Enterprise), built with TypeScript, Bun, React, shadcn/ui, Tailwind CSS, and Pierre's `@pierre/diffs` and `@pierre/trees`.
 
@@ -20,8 +20,8 @@ OpenRouter is supported at `https://openrouter.ai/api/v1`. Setting the model to 
 Subsequent runs need only the review URL:
 
 ```sh
-change-stack 'https://gitlab.company.internal/team/project/-/merge_requests/123'
-change-stack 'https://github.company.internal/team/project/pull/123'
+cstack 'https://gitlab.company.internal/team/project/-/merge_requests/123'
+cstack 'https://github.company.internal/team/project/pull/123'
 ```
 
 Each Git host has separate saved credentials. To replace credentials or configure AI later, use `--setup` with a review URL. `--no-ai` skips the model even when it is configured. `--no-open` prints URLs without opening a browser. `--port 4317` sets a fixed local port; otherwise the OS chooses a free port. `--demo` loads illustrative sample changes without making outbound application requests. Keep the terminal open while reviewing; Ctrl+C shuts down the server.
@@ -31,12 +31,19 @@ Each Git host has separate saved credentials. To replace credentials or configur
 The default prompt asks for simple language, short sentences, and only useful detail. Use English (`en`, the default) or Russian (`ru`):
 
 ```sh
-change-stack 'https://github.company/team/project/pull/123' --language ru
-change-stack 'https://github.company/team/project/pull/123' --system-prompt-file ./review-prompt.txt
-change-stack 'https://github.company/team/project/pull/123' --system-prompt 'Explain each change in everyday language.'
+cstack 'https://github.company/team/project/pull/123' --language ru
+cstack 'https://github.company/team/project/pull/123' --system-prompt-file ./review-prompt.txt
+cstack 'https://github.company/team/project/pull/123' --system-prompt 'Explain each change in everyday language.'
 ```
 
-Prompt and language flags apply to this run. To save defaults, set `systemPrompt` and `language` inside `ai` in the credentials configuration file. A custom prompt replaces the default explanation prompt; the language and untrusted-code instructions are appended. Prompts must be nonempty and at most 16,000 characters.
+Prompt and `--language` flags apply to this run. Save a default without providing a PR URL:
+
+```sh
+cstack --default-language ru
+cstack '<review-url>' --language en  # override for this review only
+```
+
+First-run setup stores everything in `~/.change-stack/`: `config.json` contains Git/model credentials, endpoint settings, budgets, and `defaultLanguage`; `system-prompt.md` contains the editable default prompt. Edit the Markdown file to change the prompt for future reviews. `--system-prompt` and `--system-prompt-file` override it for one run. The language and untrusted-code instructions are appended. Prompts must be nonempty and at most 16,000 characters. Existing settings are automatically copied from the previous `~/.config/change-stack/config.json` location (or its XDG equivalent), preserving credentials and preferences; the old file is left intact.
 
 PR summaries can use unchanged files anywhere in the source repository. The model chooses read-only `list_files` / `read_file` requests through a validated JSON protocol, compatible with endpoints that do not support native function calling. Reads use the PR's head commit, including forked source repositories. There is no shell execution or cloning.
 
@@ -45,7 +52,7 @@ Exploration stops after two planning rounds or six tool calls, whichever comes f
 You can lower the budgets:
 
 ```sh
-change-stack 'https://github.company/team/project/pull/123' \
+cstack 'https://github.company/team/project/pull/123' \
   --max-tool-calls 2 --max-context-chars 24000 --max-output-tokens 16000
 ```
 
@@ -55,15 +62,15 @@ change-stack 'https://github.company/team/project/pull/123' \
 
 ```sh
 bun run build
-./dist/change-stack --demo
+./dist/cstack --demo
 ```
 
 The binary embeds the Bun runtime and browser assets. End users do not need Bun, Node, or a package install. Build on the target platform or cross-compile with Bun:
 
 ```sh
-bun build --compile --target=bun-linux-x64 src/cli.ts --outfile dist/change-stack-linux-x64
-bun build --compile --target=bun-darwin-arm64 src/cli.ts --outfile dist/change-stack-macos-arm64
-bun build --compile --target=bun-windows-x64 src/cli.ts --outfile dist/change-stack-windows-x64.exe
+bun build --compile --target=bun-linux-x64 src/cli.ts --outfile dist/cstack-linux-x64
+bun build --compile --target=bun-darwin-arm64 src/cli.ts --outfile dist/cstack-macos-arm64
+bun build --compile --target=bun-windows-x64 src/cli.ts --outfile dist/cstack-windows-x64.exe
 ```
 
 Builds download dependencies from npm; the shipped application does not. Distribute third-party license notices with the binary; generate `dist/THIRD_PARTY_NOTICES.txt` with `bun run notices` after building.
@@ -71,10 +78,11 @@ Builds download dependencies from npm; the shipped application does not. Distrib
 ## Review UI
 
 - Logical review layers generated in bounded batches by your model, with exact file-reference validation and local grouping as a fallback.
-- A small shadcn sidebar for switching layers and files, with an accessible mobile drawer.
+- A small shadcn sidebar for switching layers and files, with an accessible mobile drawer and extension-specific file icons. Layer hover tooltips are removed.
 - Pierre's file tree and syntax-highlighted split/unified diffs. Each layer opens directly to its changes.
 - Four selectable themes: GitHub dark/light and GitLab dark/light. The initial GitHub theme follows your system preference. All theme assets are local.
-- Each layer shows a short explanation above its diffs; All changes shows the whole PR summary.
+- Each layer shows a short explanation in a bordered Markdown box above its diffs; All changes shows the whole PR summary. Lists, emphasis, inline code, code blocks, and tables are supported. Raw HTML and external images are not loaded.
+- Each file has a Reviewed checkbox. Checking it collapses the diff while retaining its file header. Reviewed state stays consistent across layers during the current browser session. You can expand a reviewed file without unchecking it.
 - File tree clicks scroll to the chosen file without hiding other files. Sidebar selection changes color while keeping the same font weight.
 - No branding, chat, notes, badges, or status panels in the review workspace.
 - Warnings when service responses omit file content or pagination is capped.
@@ -85,9 +93,9 @@ The CLI service binds only to `127.0.0.1`. Its API requires a random session coo
 
 Application requests go only to the selected Git service API and the explicitly configured model endpoint. Public GitHub uses `api.github.com`; GitHub Enterprise uses the selected host's `/api/v3`; GitLab uses its `/api/v4`. Redirects are rejected, including same-host redirects, so fix the configured URL rather than relying on a redirect. The application does not fetch links, images, or instructions from repository content. There is no telemetry, CDN, external font, cloud fallback, or update check. Opening the original review or token page navigates your browser to the Git host you selected.
 
-Credentials are stored **in plaintext** at `~/.config/change-stack/config.json` (or under `XDG_CONFIG_HOME`), with file mode `0600` on POSIX. Override the path with `CHANGE_STACK_CONFIG`. Windows requires an appropriate user-only filesystem ACL; POSIX mode bits do not provide equivalent access control there. OS keychain integration is not implemented. Delete the configuration file to forget all saved credentials.
+Credentials are stored **in plaintext** at `~/.change-stack/config.json`, with file mode `0600` on POSIX; the settings directory is created with mode `0700`. The editable `system-prompt.md` file also uses mode `0600`. Override the path with `CHANGE_STACK_CONFIG`. Windows requires an appropriate user-only filesystem ACL; POSIX mode bits do not provide equivalent access control there. OS keychain integration is not implemented. Delete `~/.change-stack/` to remove settings and saved credentials. If settings were migrated, also remove the old configuration file to erase its retained copy.
 
-Source patches and analysis are held in process/browser memory. They are not written to a database or browser storage. Sidebar state is also held in memory. This application cannot control retention by your model endpoint, Git service, operating system, or browser. HTTPS and trusted corporate certificates are recommended; certificate verification is never disabled by this app. Configure corporate CAs through the runtime/OS trust mechanism available in your deployment.
+Source patches, reviewed-file state, and analysis are held in process/browser memory. They are not written to a database or browser storage. Sidebar state is also held in memory. This application cannot control retention by your model endpoint, Git service, operating system, or browser. HTTPS and trusted corporate certificates are recommended; certificate verification is never disabled by this app. Configure corporate CAs through the runtime/OS trust mechanism available in your deployment.
 
 ## Current limits
 

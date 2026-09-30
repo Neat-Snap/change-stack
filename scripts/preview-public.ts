@@ -5,7 +5,7 @@ import { analyze, localAnalysis } from '../src/core/analysis';
 import { loadConfig } from '../src/core/config';
 import { startServer } from '../src/server';
 
-const target = parseTarget(Bun.argv[2] ?? 'https://github.com/oven-sh/bun/pull/44285');
+const target = parseTarget(Bun.argv[2] ?? 'https://github.com/oven-sh/bun/pull/44171');
 // Reuse existing local gh authentication without printing or persisting the token.
 const auth = Bun.spawn(['gh', 'auth', 'token', '--hostname', new URL(target.origin).hostname], { stdout: 'pipe', stderr: 'ignore' });
 const token = (await new Response(auth.stdout).text()).trim();

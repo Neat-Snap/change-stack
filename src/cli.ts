@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import * as p from '@clack/prompts';
 import { parseArgs } from 'node:util';
-import { configPath, loadConfig, saveConfig } from './core/config';
+import { configPath, loadConfig, promptPath, saveConfig } from './core/config';
 import { parseTarget, serviceUrl, tokenCreationUrl } from './core/target';
 import { fetchReview, validateHost } from './core/providers';
 import { analyze, localAnalysis } from './core/analysis';
@@ -52,6 +52,7 @@ async function setupAI(config: Config): Promise<AIConfig | undefined> {
   const model = answer(await p.text({ message: 'Model ID provided by your company', validate: v => v?.trim() ? undefined : 'A model ID is required.' }));
   const apiKey = answer(await p.password({ message: 'Your AI API key (input is hidden)', validate: v => v?.trim() ? undefined : 'An API key is required.' }));
   const language = answer(await p.select({ message: 'Explanation language', options: [{ value: 'en' as const, label: 'English' }, { value: 'ru' as const, label: 'Русский' }] }));
+  config.defaultLanguage = language;
   config.ai = { language, baseUrl: baseUrl.replace(/\/$/, ''), model: model.trim(), apiKey: apiKey.trim() };
   if (serviceUrl(baseUrl).hostname === 'openrouter.ai' && model.trim() === 'openai/gpt-6-luna') {
     config.ai.reasoningEffort = 'high';
@@ -65,13 +66,14 @@ async function main() {
   const { values, positionals } = parseArgs({ args: Bun.argv.slice(2), allowPositionals: true, options: {
     help: { type: 'boolean', short: 'h' }, demo: { type: 'boolean' }, 'no-open': { type: 'boolean' }, 'no-ai': { type: 'boolean' },
     setup: { type: 'boolean' }, port: { type: 'string' },
-    'system-prompt': { type: 'string' }, 'system-prompt-file': { type: 'string' }, language: { type: 'string' },
+    'system-prompt': { type: 'string' }, 'system-prompt-file': { type: 'string' }, language: { type: 'string' }, 'default-language': { type: 'string' },
     'max-tool-calls': { type: 'string' }, 'max-context-chars': { type: 'string' }, 'max-output-tokens': { type: 'string' },
   } });
-  if (values.help) { console.log(`Change Stack Local\n\nUsage: change-stack [review-url] [options]\n\n  --setup      Configure or replace Git and AI credentials\n  --no-ai      Review without contacting the model\n  --no-open    Print URLs without launching a browser\n  --port N     Choose the local server port (default: automatic)\n  --language en|ru             Explanation language (default: English)\n  --system-prompt TEXT         Replace the default explanation prompt\n  --system-prompt-file PATH    Read a replacement prompt from a UTF-8 file\n  --max-tool-calls N           Repository reads (default: 6, range: 0–20)\n  --max-context-chars N        Input characters per model call (default: 48000)\n  --max-output-tokens N        Output tokens per call, including reasoning\n  --demo       Open a sample review with no outbound requests\n\nCredentials: ${configPath()}\nCredentials are saved in a local plaintext file with mode 0600 on POSIX.\nCode, questions, and analysis are held in memory and discarded on exit.`); return; }
+  if (values.help) { console.log(`Change Stack\n\nUsage: cstack [review-url] [options]\n\n  --setup      Configure or replace Git and AI credentials\n  --no-ai      Review without contacting the model\n  --no-open    Print URLs without launching a browser\n  --port N     Choose the local server port (default: automatic)\n  --language en|ru             Override language for this review\n  --default-language en|ru     Save the default language (no URL needed)\n  --system-prompt TEXT         Replace the default explanation prompt\n  --system-prompt-file PATH    Read a replacement prompt from a UTF-8 file\n  --max-tool-calls N           Repository reads (default: 6, range: 0–20)\n  --max-context-chars N        Input characters per model call (default: 48000)\n  --max-output-tokens N        Output tokens per call, including reasoning\n  --demo       Open a sample review with no outbound requests\n\nSettings and credentials: ${configPath()}\nEditable system prompt: ${promptPath()}\nCredentials are saved in a local plaintext file with mode 0600 on POSIX.\nCode, questions, and analysis are held in memory and discarded on exit.`); return; }
   const port = values.port === undefined ? 0 : Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Port must be an integer between 0 and 65535.');
   const overrides: Partial<AIConfig> = {};
+  if (values['default-language'] && !['en', 'ru'].includes(values['default-language'])) throw new Error('Default language must be en or ru.');
   if (values.language) {
     if (!['en', 'ru'].includes(values.language)) throw new Error('Language must be en or ru.');
     overrides.language = values.language as 'en' | 'ru';
@@ -92,12 +94,19 @@ async function main() {
       overrides[field] = n;
     }
   }
+  const config = await loadConfig();
+  if (values['default-language']) {
+    config.defaultLanguage = values['default-language'] as 'en' | 'ru';
+    if (config.ai) config.ai.language = config.defaultLanguage;
+    await saveConfig(config);
+    p.log.success(`Default language saved: ${config.defaultLanguage}`);
+    if (!positionals.length && !values.demo && !values.setup) return;
+  }
   p.intro('Change Stack · Local review');
   let session;
   let ai: AIConfig | undefined;
   if (values.demo) session = demoSession();
   else {
-    const config = await loadConfig();
     let url = positionals[0];
     let provider: Provider | undefined;
     if (!url) {
@@ -115,7 +124,10 @@ async function main() {
     }
     ai = values['no-ai'] ? undefined : config.ai;
     if (!values['no-ai'] && ((!ai && !config.aiSetupSkipped) || values.setup) && process.stdin.isTTY) ai = await setupAI(config);
-    if (ai) ai = { ...ai, ...overrides };
+    if (ai) {
+      const savedPrompt = await readFile(promptPath(), 'utf8');
+      ai = { ...ai, systemPrompt: savedPrompt, language: config.defaultLanguage ?? ai.language ?? 'en', ...overrides };
+    }
     const spinner = p.spinner(); spinner.start('Fetching review metadata and changed files');
     let review;
     try { review = await fetchReview(target, host); spinner.stop(`Loaded ${review.files.length} changed files`); }
