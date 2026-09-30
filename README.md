@@ -15,14 +15,13 @@
 
 ## Install
 
-Releases ship a standalone binary for **macOS on Intel (x86_64)**; no Bun or Node.js required. Download `cstack-vX.Y.Z-macos-x64.tar.gz` and `SHA256SUMS` from the [latest release](https://github.com/Neat-Snap/change-stack/releases/latest), then run these commands with `vX.Y.Z` replaced by the downloaded version:
+On **macOS on Intel (x86_64)**, copy and paste this command to install the [latest release](https://github.com/Neat-Snap/change-stack/releases/latest). No Bun or Node.js required.
 
 ```sh
-shasum -a 256 -c SHA256SUMS
-tar -xzf cstack-vX.Y.Z-macos-x64.tar.gz
-mkdir -p ~/.local/bin && cp cstack-vX.Y.Z-macos-x64/cstack ~/.local/bin/
-cstack --version
+bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/Neat-Snap/change-stack/master/scripts/install.sh | sh' && export PATH="$HOME/.local/bin:$PATH" && cstack --version
 ```
+
+The installer downloads and verifies the release, installs `cstack` to `~/.local/bin`, and adds that directory to your shell configuration if needed.
 
 The binary is not signed or notarized. If macOS blocks it, allow it in **System Settings → Privacy & Security**.
 

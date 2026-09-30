@@ -15,14 +15,13 @@
 
 ## Установка
 
-В релизах есть автономный бинарник для **macOS на Intel (x86_64)**; Bun и Node.js не нужны. Скачайте `cstack-vX.Y.Z-macos-x64.tar.gz` и `SHA256SUMS` из [последнего релиза](https://github.com/Neat-Snap/change-stack/releases/latest), затем выполните команды, заменив `vX.Y.Z` на скачанную версию:
+На **macOS на Intel (x86_64)** скопируйте и выполните эту команду, чтобы установить [последний релиз](https://github.com/Neat-Snap/change-stack/releases/latest). Bun и Node.js не нужны.
 
 ```sh
-shasum -a 256 -c SHA256SUMS
-tar -xzf cstack-vX.Y.Z-macos-x64.tar.gz
-mkdir -p ~/.local/bin && cp cstack-vX.Y.Z-macos-x64/cstack ~/.local/bin/
-cstack --version
+bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/Neat-Snap/change-stack/master/scripts/install.sh | sh' && export PATH="$HOME/.local/bin:$PATH" && cstack --version
 ```
+
+Установщик скачивает релиз, проверяет контрольную сумму, устанавливает `cstack` в `~/.local/bin` и при необходимости добавляет этот каталог в настройки вашей оболочки.
 
 Бинарник не подписан и не нотарифицирован. Если macOS блокирует запуск, разрешите его в **Системные настройки → Конфиденциальность и безопасность**.
 
