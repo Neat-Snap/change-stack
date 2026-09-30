@@ -47,7 +47,7 @@ First-run setup stores everything in `~/.change-stack/`: `config.json` contains 
 
 PR summaries can use unchanged files anywhere in the source repository. The model chooses read-only `list_files` / `read_file` requests through a validated JSON protocol, compatible with endpoints that do not support native function calling. Reads use the PR's head commit, including forked source repositories. There is no shell execution or cloning.
 
-Exploration stops after two planning rounds or six tool calls, whichever comes first, then makes one final summary call. Every tool call makes at most one Git API request. Directory listings return at most 100 entries; GitLab can request the next page. Reads are limited to 512 KB of response data and 24,000 text characters per file. This is selective repository exploration, not a full repository audit. Layer generation is separately capped at 12 calls; further batches keep local file groups. There are no automatic retries.
+Exploration stops after two planning rounds or six tool calls, whichever comes first, then makes one final summary call. Every tool call makes at most one Git API request. Directory listings return at most 100 entries; GitLab can request the next page. Reads are limited to 512 KB of response data and 24,000 text characters per file. This is selective repository exploration, not a full repository audit. Layer generation is separately capped at 12 calls; further batches keep unexplained change ranges. There are no automatic retries.
 
 You can lower the budgets:
 
@@ -77,15 +77,38 @@ Builds download dependencies from npm; the shipped application does not. Distrib
 
 ## Review UI
 
-- Logical review layers generated in bounded batches by your model, with exact file-reference validation and local grouping as a fallback.
-- A small shadcn sidebar for switching layers and files, with an accessible mobile drawer and extension-specific file icons. Layers and the file tree collapse independently; each has its own scroll area, and long layer lists leave space for the tree. Distinct Layers and Files headers have their collapse arrows on the right; spacing separates the sections without a horizontal rule. Layer hover tooltips are removed. Previous/next controls in the main header navigate layers even when their list is collapsed.
+- Logical review layers anchored to changed patch rows. A file and even one edit block can contribute to several layers. The model can combine ranges across files; exact range validation rejects invented or overlapping assignments and keeps unassigned edits in an additional layer. Generation uses bounded batches and calls; local groups remain available without AI.
+- A small shadcn sidebar for switching layers and files, with an accessible mobile drawer and extension-specific file icons. Layers and the file tree collapse independently; each has its own scroll area, and long layer lists leave space for the tree. Distinct Layers and Files headers have their collapse arrows on the right; full-width backgrounds and subtle horizontal borders separate the sections. The tree has no extra outer indentation; folder depth supplies its hierarchy. A/M/D/R markers identify added, modified, deleted, and renamed files. Layer hover tooltips are removed. Previous/next controls in the main header navigate layers even when their list is collapsed.
 - Pierre's file tree and syntax-highlighted split/unified diffs. Each layer opens directly to its changes. The diff pane is flat and compact, with sticky file headers, icon-based display controls, and immediate file jumps. Code rendering is limited to a window around the viewport to reduce DOM work on long patches. File headers remain available throughout the list.
 - Four selectable themes: GitHub dark/light and GitLab dark/light. The initial GitHub theme follows your system preference. All theme assets are local.
 - Each layer shows a short explanation in a bordered Markdown box above its diffs; All changes shows the whole PR summary. Lists, emphasis, inline code, code blocks, and tables are supported. Raw HTML and external images are not loaded.
 - Each file has a Reviewed checkbox. Checking it collapses the diff while retaining its file header. Reviewed state stays consistent across layers during the current browser session. You can expand a reviewed file without unchecking it.
 - File tree clicks scroll to the chosen file without hiding other files. Sidebar selection changes color while keeping the same font weight.
-- No branding, chat, notes, badges, or status panels in the review workspace.
+- No branding, permanent chat, notes, or status dashboard in the review workspace.
 - Warnings when service responses omit file content or pagination is capped.
+
+## Search and keyboard navigation
+
+The search button, `Cmd/Ctrl+K`, `/`, or `?` opens search over loaded file paths, diff text, and layer summaries. Up to 100 results are displayed. Arrow keys select a result; Enter opens it and Escape closes search. Selecting a diff match opens All changes, expands the file, and highlights its source line while preserving the complete review. Search runs locally and makes no model calls.
+
+| Key | Action |
+| --- | --- |
+| `j` / `k` | Next / previous layer |
+| `l` / `h` | Next / previous file in the current view |
+| `u` | Toggle split/unified |
+| `[` | Toggle sidebar |
+| `Cmd/Ctrl+K`, `/`, `?` | Search |
+| `Esc` | Close search or symbol lookup |
+
+Letter shortcuts are ignored while typing or while a dialog is open. Native tree and dialog arrow navigation remain available.
+
+## Context and symbols
+
+For modified/renamed files, **+20 context lines** loads old/current text at the review's pinned commits and expands equal surrounding lines. Repeated clicks expand up to 200 extra lines; Reset context restores the compact patch. Expansion stops at other edits, so changes from another layer are not silently included. GitHub old content uses the compare API's merge base; GitLab uses its diff base. If that commit or file content is unavailable, context cannot be expanded. Binary/oversized files remain readable only through the available patch.
+
+**Alt-click a highlighted symbol**, or use the small symbol lookup button in a file header, to inspect definitions and references without leaving the page. Lookup searches the pinned PR head, prioritizing the current/changed files and nearby directories. It is a bounded text search with heuristic definition labels, not a language server or a complete repository index. The dialog reports searched/unavailable files and search limits, shows surrounding lines, and can jump back to changed files.
+
+Repository lookup scans at most 24 files and lists at most four directories per request. Files are limited to 250,000 text characters and 512 KB of API response data; oversized reads fail instead of returning misleading partial context. A bounded 24-entry cache lives only in process memory. Two concurrent UI lookup requests are allowed. Browser requests go to the local authenticated API; only the server contacts the configured Git service. No additional AI calls or services are involved.
 
 ## Data handling
 
@@ -101,7 +124,7 @@ Source patches, reviewed-file state, and analysis are held in process/browser me
 
 This is a working first version, not full Change Stack parity. It reads supplied diffs and selected unchanged repository files; it does not clone repositories, build a full dependency graph, generate diagrams, synchronize discussions, publish comments, or approve/merge reviews. Model explanations are hypotheses for human review, not merge decisions. Very large patches are shortened for the model and explicitly identified. Layers are ordered within batches; the PR summary combines layer explanations and bounded repository context.
 
-The UI opens after fetch and explanation preparation; long reviews may take several model calls. Interrupted or failed batches fall back to local file groups. This implementation uses `/chat/completions` with standard non-streaming chat messages; endpoints requiring a different API need an adapter. Pierre Trees is pinned to a beta release. Hosted multiuser deployment is outside this version's scope.
+The UI opens after fetch and explanation preparation; long reviews may take several model calls. Interrupted or failed batches retain their change ranges in unexplained groups. This implementation uses `/chat/completions` with standard non-streaming chat messages; endpoints requiring a different API need an adapter. Pierre Trees is pinned to a beta release. Hosted multiuser deployment is outside this version's scope.
 
 ## Validate
 
@@ -117,4 +140,4 @@ Tests use local mock services for host isolation, redirect refusal, credential p
 
 The UI smoke check launches the compiled binary outside the project directory and checks the shadcn layout, layer navigation, both Pierre components, split/unified rendering, mobile navigation, and absence of external requests. Browser downloads are development tools, not part of the shipped binary. Use `CHANGE_STACK_CHROMIUM` to point the test at an existing compatible Chromium executable. Tailwind is compiled to a local stylesheet before development, tests, and executable builds; `bun run styles` generates it separately when needed.
 
-UI comparison notes and scope: [Diffshub comparison](docs/ui-comparison.md).
+UI comparison notes and scope: [Diffshub comparison](docs/ui-comparison.md), [CodeRabbit feature comparison](docs/change-stack-feature-comparison.md).

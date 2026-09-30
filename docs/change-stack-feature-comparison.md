@@ -1,5 +1,7 @@
 # CodeRabbit Change Stack feature comparison
 
+Updated after implementing local search, keyboard navigation, range-based layers, context expansion, and bounded symbol lookup. Saved progress, freshness checks, and provider comments remain deferred.
+
 Checked against the official Change Stack documentation on 2026-09-30 and our current source. This inventories the documented review workspace, including its integration entry points; it does not claim to inventory the entire CodeRabbit platform. Provider and plan restrictions apply to CodeRabbit features. Recommendations below are our judgment, not claims from CodeRabbit.
 
 Status: **Yes** = available in our UI; **Partial** = a narrower version; **Missing** = absent; **Omitted** = deliberately excluded from our agreed UI.
@@ -10,16 +12,16 @@ Source: [Overview](https://docs.coderabbit.ai/change-stack), [Navigation](https:
 
 | Feature | Our version |
 | --- | --- |
-| Logical layers spanning files and directories | Partial: model groups whole files; generation runs in bounded batches. |
+| Logical layers spanning files and directories | Yes: model assigns changed-row ranges across files; generation remains bounded by batches. |
 | Cohorts for independent groups of layers | Missing: one flat layer list. |
 | Reading order and explicit dependencies | Partial: ordered list, no dependency model or global ordering pass. |
-| Line ranges with attached summaries/findings | Missing: a file belongs to one layer; no range assignments. |
+| Line ranges with attached summaries/findings | Partial: ranges drive layer diffs, including multiple layers per file; summaries attach to layers rather than individual ranges. No findings model. |
 | PR overview and layer summaries | Yes: Markdown boxes above the diffs. |
 | Layers and changed-file navigation | Yes: independently collapsible sections, extension icons, continuous diff scrolling. |
-| Previous/next navigation | Partial: layer buttons; no file navigation controls. |
-| Command palette and keyboard shortcuts | Partial: shadcn sidebar shortcut; no review command palette or layer/file shortcuts. |
+| Previous/next navigation | Yes: layer buttons and next/previous layer/file shortcuts. |
+| Command palette and keyboard shortcuts | Partial: search palette, layer/file/layout/sidebar shortcuts; no action command catalog. |
 | Responsive navigation and focus mode | Partial: mobile sidebar and sidebar toggle; no dedicated focus mode. |
-| Search paths, diffs, source, summaries, comments | Missing: no artifact search. |
+| Search paths, diffs, source, summaries, comments | Partial: local search covers paths, patches, and layer summaries; no comment/source-content index. |
 | Viewed-file progress | Partial: Reviewed collapses a file; survives layer switches, not reloads or process restarts. No progress counter/provider sync. |
 | Deep links to views, layers, files, ranges | Missing: launch URL opens a session, not a specific review location. |
 | Public share locators | Missing: local bearer session links are not a public sharing/access system. |
@@ -37,10 +39,10 @@ Source: [Read changes](https://docs.coderabbit.ai/change-stack/reading-diffs).
 | --- | --- |
 | Semantic/entity diff with line-diff fallback | Missing: ordinary patches, no entity extraction or moved-code organization. |
 | Split/unified layout | Yes. |
-| Expand unchanged context; compact/context semantic views | Missing: UI has only the supplied patch. Repository reads for the model do not expand the viewer. |
+| Expand unchanged context; compact/context semantic views | Partial: +20 context controls fetch pinned old/current text and expand equal surrounding lines; no semantic mode. |
 | Hide whitespace-only changes | Missing. |
 | Blame lookup | Missing. |
-| Code Peek definitions/references | Missing: no interactive symbol lookup. |
+| Code Peek definitions/references | Partial: Alt-click/manual lookup over up to 24 changed/nearby files, with snippets and heuristic definition labels. |
 | Rendered document/source comparisons | Missing: Markdown summaries are supported, Markdown file diffs are not rendered. |
 | Image comparisons and fit controls | Missing: non-text patches show a placeholder. |
 | Collapse summaries by complexity | Missing: file collapse exists, range complexity does not. |
@@ -151,11 +153,11 @@ CodeRabbit's Azure artifacts are read-only. CodeRabbit's public anonymous sharin
 
 ## Recommended order
 
-1. **Local search and keyboard navigation.** Index loaded paths, patches, and summaries in-browser; add command palette, next/previous file/layer, and navigation back. Good daily value without extra AI calls or outbound services.
-2. **Range-based layers.** Extend model output with validated hunk/line references, permit one file to contribute to several layers, and reconcile batches into a global reading order. Preserve All changes as the complete diff. This addresses the main structural gap.
-3. **Context expansion and Code Peek.** Load old/current content from approved provider origins at pinned commits. Start with bounded text lookup and a clear incomplete-results state; add language-aware indexing only if needed.
-4. **Freshness and resumable review.** Compare head on demand; associate reviewed state with host/project/PR/head. Offer opt-in storage with retention and deletion controls rather than silently caching code.
-5. **Provider comments and review submission.** Read threads first, then draft/reply/submit with explicit write setup and stale-head checks. This is the most useful collaboration addition for teammates reviewing each other's code.
+1. **Implemented: local search and keyboard navigation.** Index loaded paths, patches, and summaries in-browser; add command palette, next/previous file/layer, and navigation back. Good daily value without extra AI calls or outbound services.
+2. **Implemented: range-based layers.** Extend model output with validated hunk/line references, permit one file to contribute to several layers, and reconcile batches into a global reading order. Preserve All changes as the complete diff. This addresses the main structural gap.
+3. **Implemented: context expansion and Code Peek.** Load old/current content from approved provider origins at pinned commits. Start with bounded text lookup and a clear incomplete-results state; add language-aware indexing only if needed.
+4. **Deferred by user: freshness and resumable review.** Compare head on demand; associate reviewed state with host/project/PR/head. Offer opt-in storage with retention and deletion controls rather than silently caching code.
+5. **Deferred by user: provider comments and review submission.** Read threads first, then draft/reply/submit with explicit write setup and stale-head checks. This is the most useful collaboration addition for teammates reviewing each other's code.
 6. **Small, evidence-linked review questions/findings.** Surface existing questions first. Add severity only with a validated code anchor and concise explanation. Avoid a large dashboard or a speculative merge-readiness score.
 7. **Optional diagrams and rich file diffs.** Generate diagrams only when they clarify a flow; image/Markdown comparison is worthwhile for repositories that change those assets often.
 

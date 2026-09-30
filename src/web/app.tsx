@@ -1,8 +1,8 @@
-import React, { Component, useEffect, useRef, useState } from 'react';
+import React, { Component, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { PatchDiff, Virtualizer } from '@pierre/diffs/react';
+import { Virtualizer } from '@pierre/diffs/react';
 import { FileTree, useFileTree } from '@pierre/trees/react';
-import { ChevronLeft, ChevronRight, Columns2, Rows2, SunMoon, Files, TriangleAlert } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Columns2, Rows2, SunMoon, Files, TriangleAlert, Search, SearchCode } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { themes, type ReviewTheme } from './themes';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -18,6 +18,11 @@ import {
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { ReviewSearch, type SearchResult } from './review-search';
+import { ReviewPatch, readApi, patchLineOffset, type LineTarget } from './review-patch';
+import { CodePeek, type PeekState } from './code-peek';
+import type { SymbolResult } from '../core/review-tools';
+import { layerFile } from '../core/changes';
 import { Summary } from './summary';
 import type { ChangedFile, Session } from '../core/types';
 import './generated.css';
@@ -44,6 +49,7 @@ function Tree({ files, select }: { files: ChangedFile[]; select: (path: string) 
       if (path && files.some(file => file.path === path)) select(path);
     },
     icons: { set: 'complete' },
+    gitStatus: files.map(file => ({ path: file.path, status: file.status })),
   });
   return <FileTree model={model} className="file-tree" style={{ height: '100%' }} onClick={event => {
     // A selected file can be clicked again after the reviewer scrolls elsewhere.
@@ -74,9 +80,14 @@ function ReviewWorkspace({ session }: { session: Session }) {
   const [treeOpen, setTreeOpen] = useState(true);
   const activeLayerIndex = analysis.layers.findIndex(layer => layer.id === activeLayer);
   const [layout, setLayout] = useState<'split' | 'unified'>('split');
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, setOpenMobile, setOpen, open, openMobile } = useSidebar();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [peek, setPeek] = useState<PeekState>();
+  const lookupPath = useRef(''), lookupSerial = useRef(0);
+  const [target, setTarget] = useState<LineTarget>();
+  const pendingJump = useRef<{ path: string; line?: number; side?: 'old' | 'current' } | undefined>(undefined);
   const layer = analysis.layers.find(layer => layer.id === activeLayer);
-  const files = review.files.filter(file => !layer || layer.files.includes(file.path));
+  const files = useMemo(() => review.files.filter(file => !layer || layer.files.includes(file.path)).map(file => layer?.ranges && file.patch ? layerFile(file, layer.ranges) : file), [review.files, layer]);
   const warnings = [...review.warnings, ...analysis.warnings];
   const [theme, setTheme] = useState<ReviewTheme>(() => matchMedia('(prefers-color-scheme: dark)').matches ? 'github-dark' : 'github-light');
   const dark = theme.endsWith('dark');
@@ -92,9 +103,67 @@ function ReviewWorkspace({ session }: { session: Session }) {
     if (isMobile) setOpenMobile(false);
   }
   function chooseFile(path: string) {
-    sections.current.get(path)?.scrollIntoView({ behavior: 'instant', block: 'start' });
+    pendingJump.current = { path };
+    performJump();
     if (isMobile) setOpenMobile(false);
   }
+
+  function performJump() {
+    requestAnimationFrame(() => {
+      const jump = pendingJump.current;
+      if (!jump) return;
+      const section = sections.current.get(jump.path);
+      if (!section) return;
+      const pane = section.closest('.diff-viewport') as HTMLElement;
+      const file = (jump.line ? review.files : files).find(f => f.path === jump.path);
+      const top = pane.scrollTop + section.getBoundingClientRect().top - pane.getBoundingClientRect().top;
+      pane.scrollTop = top + (jump.line && file ? 40 + patchLineOffset(file.patch, jump.line, jump.side ?? 'current', layout) : 0);
+      if (jump.line) requestAnimationFrame(() => requestAnimationFrame(() => {
+        const root = section.querySelector('diffs-container')?.shadowRoot;
+        const column = jump.side === 'old' ? 'deletions' : 'additions';
+        const row = root?.querySelector(`[data-code-column="${column}"] [data-line="${jump.line}"]`) ?? root?.querySelector(`[data-line="${jump.line}"]`);
+        row?.scrollIntoView({ block: 'center' });
+      }));
+      pendingJump.current = undefined;
+    });
+  }
+  useEffect(() => { if (pendingJump.current) performJump(); }, [activeLayer, collapsed]);
+  function jumpAnywhere(path: string, line?: number, side: 'old' | 'current' = 'current') {
+    setActiveLayer('all');
+    setFileCollapsed(path, false);
+    pendingJump.current = { path, line, side };
+    setTarget(line ? { path, line, side, serial: Date.now() } : undefined);
+    if (isMobile) setOpenMobile(false);
+    performJump();
+  }
+  function chooseResult(result: SearchResult) { if (result.layer) chooseLayer(result.layer); else if (result.path) jumpAnywhere(result.path, result.line, result.side); }
+  async function lookupSymbol(symbol: string, path: string) {
+    const serial = ++lookupSerial.current; lookupPath.current = path;
+    setPeek({ symbol, loading: true });
+    try { const result = await readApi<SymbolResult>('/api/symbol', { path, symbol }); if (serial === lookupSerial.current) setPeek({ symbol, result }); }
+    catch (error) { if (serial === lookupSerial.current) setPeek({ symbol, error: (error as Error).message }); }
+  }
+  function closePeek() { lookupSerial.current++; setPeek(undefined); }
+  function moveFile(direction: number) {
+    const pane = document.querySelector('.diff-viewport')!;
+    const at = files.findIndex(f => (sections.current.get(f.path)?.getBoundingClientRect().bottom ?? 0) > pane.getBoundingClientRect().top + 48);
+    const next = Math.max(0, Math.min(files.length - 1, at + direction));
+    if (files[next]) chooseFile(files[next].path);
+  }
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const typing = event.composedPath().some(e => e instanceof HTMLElement && (e.matches('input,textarea,select,[role="combobox"]') || e.isContentEditable));
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); if (!peek) setSearchOpen(open => !open); return; }
+      if (typing || searchOpen || peek || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key === '/' || event.key === '?') { event.preventDefault(); setSearchOpen(true); }
+      else if (event.key === 'j' && activeLayerIndex < analysis.layers.length - 1) { event.preventDefault(); chooseLayer(analysis.layers[activeLayerIndex + 1].id); }
+      else if (event.key === 'k' && activeLayerIndex > 0) { event.preventDefault(); chooseLayer(analysis.layers[activeLayerIndex - 1].id); }
+      else if (event.key === 'l' || event.key === 'h') { event.preventDefault(); moveFile(event.key === 'l' ? 1 : -1); }
+      else if (event.key === 'u') { event.preventDefault(); setLayout(value => value === 'split' ? 'unified' : 'split'); }
+      else if (event.key === '[') { event.preventDefault(); if (isMobile) setOpenMobile(!openMobile); else setOpen(!open); }
+    };
+    window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
+  }, [files, activeLayerIndex, searchOpen, peek, isMobile, open, openMobile]);
 
   function setFileCollapsed(path: string, value: boolean) {
     setCollapsed(previous => { const next = new Set(previous); if (value) next.add(path); else next.delete(path); return next; });
@@ -105,6 +174,8 @@ function ReviewWorkspace({ session }: { session: Session }) {
   }
 
   return <>
+    <ReviewSearch session={session} open={searchOpen} setOpen={setSearchOpen} choose={chooseResult} />
+    <CodePeek state={peek} close={closePeek} lookup={symbol => void lookupSymbol(symbol, lookupPath.current)} canJump={path => review.files.some(f => f.path === path)} jump={(path, line) => { closePeek(); jumpAnywhere(path, line); }} />
     <Sidebar collapsible="offcanvas" className="border-r">
       <SidebarHeader className="px-3 pb-2 pt-4">
         <SidebarMenu><SidebarMenuItem>
@@ -117,8 +188,8 @@ function ReviewWorkspace({ session }: { session: Session }) {
       <SidebarContent className="gap-0 overflow-hidden!">
         <Collapsible open={layersOpen} onOpenChange={setLayersOpen}
           className={`flex min-h-0 flex-col ${layersOpen ? treeOpen ? 'max-h-[45%] flex-[0_1_45%]' : 'flex-1' : 'shrink-0'}`}>
-          <div className="relative z-10 shrink-0 bg-sidebar px-3">
-            <CollapsibleTrigger className="flex h-9 w-full items-center justify-between rounded-sm px-2 text-left text-foreground hover:bg-sidebar-accent" aria-label="Layers">
+          <div className="relative z-10 shrink-0 border-y bg-sidebar">
+            <CollapsibleTrigger className="flex h-9 w-full items-center justify-between px-4 text-left text-foreground hover:bg-sidebar-accent" aria-label="Layers">
               <span className="font-sans text-[13px] font-medium">Layers</span>
               <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${layersOpen ? 'rotate-90' : ''}`} />
             </CollapsibleTrigger>
@@ -140,13 +211,13 @@ function ReviewWorkspace({ session }: { session: Session }) {
           </CollapsibleContent>
         </Collapsible>
         <Collapsible open={treeOpen} onOpenChange={setTreeOpen} className={`flex min-h-0 flex-col ${treeOpen ? 'flex-1' : 'shrink-0'}`}>
-          <div className="relative z-10 shrink-0 bg-sidebar px-3 pt-2">
-            <CollapsibleTrigger className="flex h-9 w-full items-center justify-between rounded-sm px-2 text-left text-foreground hover:bg-sidebar-accent" aria-label={treeOpen ? 'Collapse file tree' : 'Expand file tree'}>
+          <div className="relative z-10 shrink-0 border-y bg-sidebar">
+            <CollapsibleTrigger className="flex h-9 w-full items-center justify-between px-4 text-left text-foreground hover:bg-sidebar-accent" aria-label={treeOpen ? 'Collapse file tree' : 'Expand file tree'}>
               <span className="font-sans text-[13px] font-medium">Files</span>
               <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${treeOpen ? 'rotate-90' : ''}`} />
             </CollapsibleTrigger>
           </div>
-          <CollapsibleContent className="min-h-0 flex-1 overflow-hidden pl-5 pr-3 pb-3" data-testid="tree-panel">
+          <CollapsibleContent className="min-h-0 flex-1 overflow-hidden px-3 pb-3 pt-1" data-testid="tree-panel">
             <Tree key={activeLayer} files={files} select={chooseFile} />
           </CollapsibleContent>
         </Collapsible>
@@ -165,6 +236,7 @@ function ReviewWorkspace({ session }: { session: Session }) {
             disabled={!analysis.layers.length || activeLayerIndex >= analysis.layers.length - 1}
             onClick={() => chooseLayer(analysis.layers[activeLayerIndex + 1]!.id)}><ChevronRight className="size-3.5" /></Button>
         </div>
+        <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Search changes" title="Search (⌘/Ctrl K)" onClick={() => setSearchOpen(true)}><Search className="size-4" /></Button>
         <Select value={theme} onValueChange={value => setTheme(value as ReviewTheme)}>
           <SelectTrigger aria-label="Theme" title="Theme" className="h-7! w-7! justify-center border-0 bg-transparent! p-0 shadow-none [&>svg:last-child]:hidden"><SunMoon className="size-3.5" /><span className="sr-only"><SelectValue /></span></SelectTrigger>
           <SelectContent>{Object.entries(themes).map(([id, label]) => <SelectItem key={id} value={id}>{label}</SelectItem>)}</SelectContent>
@@ -188,6 +260,7 @@ function ReviewWorkspace({ session }: { session: Session }) {
                   <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${collapsed.has(file.path) ? '' : 'rotate-90'}`} />
                   <span className="truncate font-mono">{file.path}</span>
                 </CollapsibleTrigger>
+                <Button variant="ghost" size="icon" className="size-7 shrink-0 text-muted-foreground" aria-label={`Look up symbol ${file.path}`} title="Look up symbol (or Alt-click a code token)" onClick={() => { lookupPath.current = file.path; setPeek({ symbol: '' }); }}><SearchCode className="size-4" /></Button>
                 <span className="hidden shrink-0 font-mono text-[11px] tabular-nums sm:inline"><span className="text-green-600 dark:text-green-400">+{file.additions}</span> <span className="text-red-600 dark:text-red-400">−{file.deletions}</span></span>
                 <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground">
                   <Checkbox checked={reviewed.has(file.path)} onCheckedChange={checked => markReviewed(file.path, checked === true)} aria-label={`Mark ${file.path} as reviewed`} />
@@ -197,9 +270,8 @@ function ReviewWorkspace({ session }: { session: Session }) {
               <CollapsibleContent className="border-t" data-testid="file-diff-content">
             {file.incomplete && <div className="border-b px-4 py-3 text-xs text-muted-foreground">{file.path}: this patch is incomplete.</div>}
             {file.patch ? <DiffBoundary key={file.path} patch={file.patch}>
-              <PatchDiff patch={file.patch} options={{ theme,
-                themeType: dark ? 'dark' : 'light', diffStyle: layout, preferredHighlighter: 'shiki-js',
-                enableLineSelection: true, disableFileHeader: true }} />
+              <ReviewPatch key={`${activeLayer}:${file.path}`} file={review.files.find(f => f.path === file.path)!} ranges={layer?.ranges} theme={theme} layout={layout}
+                contextAvailable={!!review.baseSha} lookup={(symbol, path) => void lookupSymbol(symbol, path)} target={target} />
             </DiffBoundary> : <div className="p-4 text-sm text-muted-foreground">{file.path} · No text patch available.</div>}
               </CollapsibleContent>
             </Collapsible>

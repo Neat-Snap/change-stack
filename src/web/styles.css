@@ -101,6 +101,7 @@
   button:not(:disabled), [role="tab"]:not(:disabled), [role="checkbox"]:not(:disabled) { cursor: pointer; }
 }
 .file-tree {
+  --trees-padding-inline-override: 0px;
   --trees-theme-sidebar-bg: var(--sidebar);
   --trees-theme-sidebar-fg: var(--muted-foreground);
   --trees-theme-sidebar-border: var(--border);
