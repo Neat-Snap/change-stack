@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "target": "ESNext", "module": "Preserve", "moduleResolution": "Bundler",
+    "baseUrl": ".", "paths": { "@/*": ["src/web/*"] },
+    "jsx": "react-jsx", "strict": true, "noEmit": true, "skipLibCheck": true,
+    "types": ["bun"], "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src", "tests", "scripts"]
+}

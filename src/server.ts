@@ -1,0 +1,48 @@
+import page from './web/index.html';
+import { ask } from './core/analysis';
+import type { AIConfig, Session } from './core/types';
+import { serviceUrl } from './core/target';
+
+export function startServer(session: Session, ai?: AIConfig, port = 0, publicOrigin?: string, hostname = '127.0.0.1') {
+  const publicUrl = publicOrigin ? serviceUrl(publicOrigin) : undefined;
+  if (publicUrl && publicUrl.pathname !== '/') throw new Error('The public URL must be an origin without a path.');
+  const secret = crypto.randomUUID() + crypto.randomUUID();
+  let chatBusy = false;
+  const server = Bun.serve({
+    hostname, port, development: false, maxRequestBodySize: 32_768,
+    routes: { '/': page },
+    async fetch(request: Request): Promise<Response> {
+      const url = new URL(request.url);
+      const origin = server.url.origin;
+      const cookieName = `change_stack_session_${server.port}`;
+      const json = (value: unknown, status = 200, extra: Record<string, string> = {}) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store', ...extra } });
+      const allowedHosts = [server.url.host, ...(publicUrl ? [publicUrl.host] : [])];
+      const allowedOrigins = [origin, ...(publicUrl ? [publicUrl.origin] : [])];
+      if (!allowedHosts.includes(url.host) || !allowedHosts.includes(request.headers.get('host') ?? '')) return json({ error: 'Invalid host.' }, 403);
+      if (request.method !== 'GET' && !allowedOrigins.includes(request.headers.get('origin') ?? '')) return json({ error: 'Invalid origin.' }, 403);
+      if (url.pathname === '/api/session' && request.method === 'POST') {
+        if (request.headers.get('authorization') !== `Bearer ${secret}`) return json({ error: 'Invalid session.' }, 401);
+        const secure = request.headers.get('origin')?.startsWith('https:') ? '; Secure' : '';
+        return json({ ok: true }, 200, { 'Set-Cookie': `${cookieName}=${secret}; HttpOnly; SameSite=Strict; Path=/${secure}` });
+      }
+      const cookie = request.headers.get('cookie')?.split(';').map(v => v.trim()).find(v => v.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
+      if (cookie !== secret) return json({ error: 'Open the URL printed by your CLI to access this session.' }, 401);
+      if (url.pathname === '/api/review' && request.method === 'GET') return json(session);
+      if (url.pathname === '/api/ask' && request.method === 'POST') {
+        if (!ai) return json({ error: 'AI is not configured for this session.' }, 400);
+        if (chatBusy) return json({ error: 'A question is already being processed.' }, 429);
+        try {
+          const body = await request.json() as any;
+          if (typeof body.question !== 'string' || !Array.isArray(body.paths) || body.paths.length > 100 || body.paths.some((p: unknown) => typeof p !== 'string')) return json({ error: 'Invalid question.' }, 400);
+          chatBusy = true;
+          const answer = await ask(session.review, ai, body.question, body.paths);
+          return json({ answer });
+        } catch {
+          return json({ error: 'Could not answer this question. Check the selected context and your model endpoint.' }, 502);
+        } finally { chatBusy = false; }
+      }
+      return json({ error: 'Not found.' }, 404);
+    },
+  });
+  return { server, url: `${publicUrl ? publicUrl.origin + '/' : server.url}#session=${secret}` };
+}

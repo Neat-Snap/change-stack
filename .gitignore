@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.firecrawl/
+*.log
+.env
+src/web/generated.css

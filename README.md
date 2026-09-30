@@ -1,0 +1,110 @@
+# Change Stack Local
+
+A minimal local review workspace for GitLab (including self-hosted instances) and GitHub (including Enterprise), built with TypeScript, Bun, React, shadcn/ui, Tailwind CSS, and Pierre's `@pierre/diffs` and `@pierre/trees`.
+
+## Run
+
+```sh
+bun install --frozen-lockfile
+bun run demo
+# Or start with a real review:
+bun src/cli.ts 'https://gitlab.company.internal/team/project/-/merge_requests/123'
+```
+
+On first run without a URL, choose GitLab or GitHub and paste a review URL. The CLI infers the host, asks you to confirm the service base URL, opens its token creation page, and accepts a hidden token input. It verifies your credentials before saving them. For GitLab, use a personal access token with `read_api`. For GitHub, use a fine-grained token with access to the repository and **Pull requests: Read** and **Contents: Read**; your organization may need to approve it.
+
+Then optionally configure your company's OpenAI-compatible API **base URL** (including `/v1` when required), model ID, and API key. The client appends `/chat/completions`; it does not assume a model name or an external default endpoint. Setup can be skipped to use local path-based groups and the diff viewer without AI.
+
+OpenRouter is supported at `https://openrouter.ai/api/v1`. Setting the model to `openai/gpt-6-luna` in setup uses high reasoning and Flex processing. The client sends OpenRouter's `reasoning.effort` and top-level `service_tier`, restricts routing to OpenAI with provider fallback disabled, and accepts model output only when the response confirms `service_tier: "flex"`. Other compatible endpoints can use optional `reasoningEffort` (`high`, `xhigh`, or `max`) and `serviceTier` (`flex`) fields in the local AI configuration. Flex requests allow up to ten minutes and do not retry at a different tier. Temperature is omitted for reasoning requests.
+
+Subsequent runs need only the review URL:
+
+```sh
+change-stack 'https://gitlab.company.internal/team/project/-/merge_requests/123'
+change-stack 'https://github.company.internal/team/project/pull/123'
+```
+
+Each Git host has separate saved credentials. To replace credentials or configure AI later, use `--setup` with a review URL. `--no-ai` skips the model even when it is configured. `--no-open` prints URLs without opening a browser. `--port 4317` sets a fixed local port; otherwise the OS chooses a free port. `--demo` loads illustrative sample changes without making outbound application requests. Keep the terminal open while reviewing; Ctrl+C shuts down the server.
+
+## Explanation settings
+
+The default prompt asks for simple language, short sentences, and only useful detail. Use English (`en`, the default) or Russian (`ru`):
+
+```sh
+change-stack 'https://github.company/team/project/pull/123' --language ru
+change-stack 'https://github.company/team/project/pull/123' --system-prompt-file ./review-prompt.txt
+change-stack 'https://github.company/team/project/pull/123' --system-prompt 'Explain each change in everyday language.'
+```
+
+Prompt and language flags apply to this run. To save defaults, set `systemPrompt` and `language` inside `ai` in the credentials configuration file. A custom prompt replaces the default explanation prompt; the language and untrusted-code instructions are appended. Prompts must be nonempty and at most 16,000 characters.
+
+PR summaries can use unchanged files anywhere in the source repository. The model chooses read-only `list_files` / `read_file` requests through a validated JSON protocol, compatible with endpoints that do not support native function calling. Reads use the PR's head commit, including forked source repositories. There is no shell execution or cloning.
+
+Exploration stops after two planning rounds or six tool calls, whichever comes first, then makes one final summary call. Every tool call makes at most one Git API request. Directory listings return at most 100 entries; GitLab can request the next page. Reads are limited to 512 KB of response data and 24,000 text characters per file. This is selective repository exploration, not a full repository audit. Layer generation is separately capped at 12 calls; further batches keep local file groups. There are no automatic retries.
+
+You can lower the budgets:
+
+```sh
+change-stack 'https://github.company/team/project/pull/123' \
+  --max-tool-calls 2 --max-context-chars 24000 --max-output-tokens 16000
+```
+
+`--max-tool-calls` accepts 0–20 (0 skips repository reads but still generates a PR summary), `--max-context-chars` accepts 8,000–200,000 (default 48,000 user-message characters), and `--max-output-tokens` accepts 1,000–32,000. Output tokens include reasoning; reasoning models default to 16,000, so very small limits can prevent a usable answer. System prompt text is separate from the input character budget. Saved defaults use `maxToolCalls`, `maxContextChars`, and `maxOutputTokens` in `ai`. Repository or model failures retain the available layer summaries and show a warning.
+
+## Build a binary
+
+```sh
+bun run build
+./dist/change-stack --demo
+```
+
+The binary embeds the Bun runtime and browser assets. End users do not need Bun, Node, or a package install. Build on the target platform or cross-compile with Bun:
+
+```sh
+bun build --compile --target=bun-linux-x64 src/cli.ts --outfile dist/change-stack-linux-x64
+bun build --compile --target=bun-darwin-arm64 src/cli.ts --outfile dist/change-stack-macos-arm64
+bun build --compile --target=bun-windows-x64 src/cli.ts --outfile dist/change-stack-windows-x64.exe
+```
+
+Builds download dependencies from npm; the shipped application does not. Distribute third-party license notices with the binary; generate `dist/THIRD_PARTY_NOTICES.txt` with `bun run notices` after building.
+
+## Review UI
+
+- Logical review layers generated in bounded batches by your model, with exact file-reference validation and local grouping as a fallback.
+- A small shadcn sidebar for switching layers and files, with an accessible mobile drawer.
+- Pierre's file tree and syntax-highlighted split/unified diffs. Each layer opens directly to its changes.
+- Four selectable themes: GitHub dark/light and GitLab dark/light. The initial GitHub theme follows your system preference. All theme assets are local.
+- Each layer shows a short explanation above its diffs; All changes shows the whole PR summary.
+- File tree clicks scroll to the chosen file without hiding other files. Sidebar selection changes color while keeping the same font weight.
+- No branding, chat, notes, badges, or status panels in the review workspace.
+- Warnings when service responses omit file content or pagination is capped.
+
+## Data handling
+
+The CLI service binds only to `127.0.0.1`. Its API requires a random session cookie, exchanged using the secret in the CLI's launch URL fragment. Mutation requests must have the same browser origin. The fragment is removed from browser history after authentication. The development preview script can explicitly bind to a Tailscale interface and accept an explicitly configured proxy origin; this does not change the CLI's default.
+
+Application requests go only to the selected Git service API and the explicitly configured model endpoint. Public GitHub uses `api.github.com`; GitHub Enterprise uses the selected host's `/api/v3`; GitLab uses its `/api/v4`. Redirects are rejected, including same-host redirects, so fix the configured URL rather than relying on a redirect. The application does not fetch links, images, or instructions from repository content. There is no telemetry, CDN, external font, cloud fallback, or update check. Opening the original review or token page navigates your browser to the Git host you selected.
+
+Credentials are stored **in plaintext** at `~/.config/change-stack/config.json` (or under `XDG_CONFIG_HOME`), with file mode `0600` on POSIX. Override the path with `CHANGE_STACK_CONFIG`. Windows requires an appropriate user-only filesystem ACL; POSIX mode bits do not provide equivalent access control there. OS keychain integration is not implemented. Delete the configuration file to forget all saved credentials.
+
+Source patches and analysis are held in process/browser memory. They are not written to a database or browser storage. Sidebar state is also held in memory. This application cannot control retention by your model endpoint, Git service, operating system, or browser. HTTPS and trusted corporate certificates are recommended; certificate verification is never disabled by this app. Configure corporate CAs through the runtime/OS trust mechanism available in your deployment.
+
+## Current limits
+
+This is a working first version, not full Change Stack parity. It reads supplied diffs and selected unchanged repository files; it does not clone repositories, build a full dependency graph, generate diagrams, synchronize discussions, publish comments, or approve/merge reviews. Model explanations are hypotheses for human review, not merge decisions. Very large patches are shortened for the model and explicitly identified. Layers are ordered within batches; the PR summary combines layer explanations and bounded repository context.
+
+The UI opens after fetch and explanation preparation; long reviews may take several model calls. Interrupted or failed batches fall back to local file groups. This implementation uses `/chat/completions` with standard non-streaming chat messages; endpoints requiring a different API need an adapter. Pierre Trees is pinned to a beta release. Hosted multiuser deployment is outside this version's scope.
+
+## Validate
+
+```sh
+bun run typecheck
+bun run test
+bun run build
+bunx playwright install --with-deps chromium
+bun run test:ui
+```
+
+Tests use local mock services for host isolation, redirect refusal, credential permissions, provider pagination, snapshot consistency, model grounding/fallback, and local session authentication.
+
+The UI smoke check launches the compiled binary outside the project directory and checks the shadcn layout, layer navigation, both Pierre components, split/unified rendering, mobile navigation, and absence of external requests. Browser downloads are development tools, not part of the shipped binary. Use `CHANGE_STACK_CHROMIUM` to point the test at an existing compatible Chromium executable. Tailwind is compiled to a local stylesheet before development, tests, and executable builds; `bun run styles` generates it separately when needed.
