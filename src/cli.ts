@@ -99,13 +99,13 @@ async function main() {
   const { values, positionals } = parseArgs({ args: Bun.argv.slice(2), allowPositionals: true, options: {
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' }, demo: { type: 'boolean' }, 'no-open': { type: 'boolean' }, 'no-ai': { type: 'boolean' },
     setup: { type: 'boolean' }, 'setup-ai': { type: 'boolean' }, 'import-settings': { type: 'string' }, debug: { type: 'boolean' }, 'check-ai': { type: 'boolean' },
-    'no-json-mode': { type: 'boolean' }, port: { type: 'string' }, listen: { type: 'string' }, 'public-url': { type: 'string' },
+    'no-json-mode': { type: 'boolean' }, 'no-reasoning': { type: 'boolean' }, port: { type: 'string' }, listen: { type: 'string' }, 'public-url': { type: 'string' },
     'system-prompt': { type: 'string' }, 'system-prompt-file': { type: 'string' }, language: { type: 'string' }, 'default-language': { type: 'string' },
     'max-tool-calls': { type: 'string' }, 'max-context-chars': { type: 'string' }, 'max-output-tokens': { type: 'string' }, 'model-timeout': { type: 'string' },
   } });
   if (values.version) { console.log(version); return; }
   if (values.debug) configureDiagnostics(event => console.error(`[cstack debug] ${JSON.stringify(event)}`));
-  if (values.help) { console.log(`Change Stack\n\nUsage: cstack [review-url] [options]\n\n  --version    Show the executable version\n  --setup      Configure or replace Git and AI credentials\n  --setup-ai   Configure the model; offer existing settings import\n  --import-settings PATH      Import models and key choices from another file\n  --check-ai    Test chat and JSON completions without a review\n  --debug       Print request timings and safe failure details\n  --no-json-mode              Omit response_format for endpoints without JSON mode\n  --no-ai      Review without contacting the model\n  --no-open    Print URLs without launching a browser\n  --port N     Choose the local server port (default: 4317; 0: automatic)\n  --listen HOST               Bind address (default: 127.0.0.1)\n  --public-url ORIGIN          Browser origin for container/proxy access\n  --language en|ru             Override language for this review\n  --default-language en|ru     Save the default language (no URL needed)\n  --system-prompt TEXT         Replace the default explanation prompt\n  --system-prompt-file PATH    Read a replacement prompt from a UTF-8 file\n  --max-tool-calls N           Repository reads (default: 6, range: 0–20)\n  --max-context-chars N        Input characters per model call (default: 48000)\n  --max-output-tokens N        Output tokens per call, including reasoning\n  --model-timeout SECONDS      Override the model request timeout (1–600)\n  --demo       Open a sample review with no outbound requests\n\nSettings and credentials: ${configPath()}\nEditable system prompt: ${promptPath()}\nCredentials are saved in a local plaintext file with mode 0600 on POSIX.\nCode, questions, and analysis are held in memory and discarded on exit.`); return; }
+  if (values.help) { console.log(`Change Stack\n\nUsage: cstack [review-url] [options]\n\n  --version    Show the executable version\n  --setup      Configure or replace Git and AI credentials\n  --setup-ai   Configure the model; offer existing settings import\n  --import-settings PATH      Import models and key choices from another file\n  --check-ai    Test chat and JSON completions without a review\n  --debug       Print request timings and safe failure details\n  --no-json-mode              Omit response_format for endpoints without JSON mode\n  --no-reasoning              Omit optional reasoning and thinking settings\n  --no-ai      Review without contacting the model\n  --no-open    Print URLs without launching a browser\n  --port N     Choose the local server port (default: 4317; 0: automatic)\n  --listen HOST               Bind address (default: 127.0.0.1)\n  --public-url ORIGIN          Browser origin for container/proxy access\n  --language en|ru             Override language for this review\n  --default-language en|ru     Save the default language (no URL needed)\n  --system-prompt TEXT         Replace the default explanation prompt\n  --system-prompt-file PATH    Read a replacement prompt from a UTF-8 file\n  --max-tool-calls N           Repository reads (default: 6, range: 0–20)\n  --max-context-chars N        Input characters per model call (default: 48000)\n  --max-output-tokens N        Output cap (default: provider setting; 0: omit)\n  --model-timeout SECONDS      Override the model request timeout (1–600)\n  --demo       Open a sample review with no outbound requests\n\nSettings and credentials: ${configPath()}\nEditable system prompt: ${promptPath()}\nCredentials are saved in a local plaintext file with mode 0600 on POSIX.\nCode, questions, and analysis are held in memory and discarded on exit.`); return; }
   const port = values.port === undefined ? 4317 : Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Port must be an integer between 0 and 65535.');
   const listen = values.listen ?? '127.0.0.1';
@@ -113,6 +113,7 @@ async function main() {
   if (values['public-url']) serviceUrl(values['public-url']);
   const overrides: Partial<AIConfig> = {};
   if (values['no-json-mode']) overrides.jsonMode = false;
+  if (values['no-reasoning']) overrides.reasoningEnabled = false;
   if (values['model-timeout'] !== undefined) {
     const seconds = Number(values['model-timeout']);
     if (!Number.isInteger(seconds) || seconds < 1 || seconds > 600) throw new ModelError('Model timeout must be 1–600 seconds.');
@@ -135,7 +136,7 @@ async function main() {
   ] as const) {
     if (values[flag] !== undefined) {
       const n = Number(values[flag]);
-      if (!Number.isInteger(n) || n < min || n > max) throw new Error('Invalid model budget.');
+      if (!Number.isInteger(n) || (n < min && !(field === 'maxOutputTokens' && n === 0)) || n > max) throw new Error('Invalid model budget.');
       overrides[field] = n;
     }
   }

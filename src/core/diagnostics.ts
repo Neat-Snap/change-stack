@@ -1,5 +1,6 @@
 export class ServiceError extends Error {
-  constructor(readonly status: number, parameter?: unknown, code?: unknown) {
+  readonly permanent: boolean;
+  constructor(readonly status: number, parameter?: unknown, code?: unknown, readonly retryAfterMs?: number) {
     const hint = status === 401 || status === 403 ? 'Check your token and access permissions.'
       : status === 400 || status === 422 ? 'Check the model ID and supported request options.'
       : status === 404 ? 'Check the API base URL and model ID.'
@@ -7,6 +8,7 @@ export class ServiceError extends Error {
     const safeParameter = ['model', 'response_format', 'temperature', 'max_tokens', 'max_completion_tokens', 'reasoning_effort', 'reasoning', 'service_tier'].includes(parameter as string) ? ` Rejected parameter: ${parameter}.` : '';
     const safeCode = ['invalid_api_key', 'model_not_found', 'context_length_exceeded', 'unsupported_parameter', 'rate_limit_exceeded', 'insufficient_quota'].includes(code as string) ? ` Error code: ${code}.` : '';
     super(`Service returned HTTP ${status}.${safeParameter}${safeCode} ${hint}`);
+    this.permanent = code === 'insufficient_quota';
   }
 }
 
@@ -38,6 +40,9 @@ type DiagnosticEvent = {
   inputChars?: number;
   maxOutputTokens?: number;
   timeoutMs?: number;
+  attempt?: number;
+  delayMs?: number;
+  status?: number;
   json?: boolean;
   reasoningEffort?: string;
   serviceTier?: string;

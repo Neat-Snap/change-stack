@@ -2,6 +2,7 @@ import { rootCertificates } from 'node:tls';
 import { readFile } from 'node:fs/promises';
 import { serviceUrl } from './target';
 import { ServiceError } from './diagnostics';
+import { retryAfterMs } from './model-requests';
 
 let extraCA: { path: string; certificates: Promise<string[]> } | undefined;
 async function trustedCertificates(): Promise<string[] | undefined> {
@@ -39,7 +40,7 @@ export async function serviceFetch(url: string, allowedOrigin: string, init: Req
       } catch { /* Only known error codes and parameter names may leave this function. */ }
       finally { await reader.cancel().catch(() => {}); }
     }
-    throw new ServiceError(response.status, details?.error?.param, details?.error?.code);
+    throw new ServiceError(response.status, details?.error?.param, details?.error?.code, retryAfterMs(response.headers.get('retry-after')));
   }
   return response;
 }

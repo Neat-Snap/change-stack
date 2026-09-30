@@ -38,7 +38,7 @@ test('sends imported headers and generation settings while enforcing the model p
     return Response.json({ choices: [{ finish_reason: 'stop', message: { content: '{"ok":true}' } }] });
   });
   const answer = await complete({ baseUrl: origin, model: 'selected-model', apiKey: 'selected-key',
-    customHeaders: { Authorization: 'unselected-key', 'X-Model-Version': 'test' }, reasoningEffort: 'max', temperature: 0.6,
+    customHeaders: { Authorization: 'unselected-key', 'X-Model-Version': 'test' }, reasoningEffort: 'max', temperature: 0.6, maxOutputTokens: 16_000,
     extraBody: { model: 'unselected-model', stream: true, messages: [], enable_thinking: true, chat_template_kwargs: { thinking: true } } }, 'Return JSON', true);
   expect(JSON.parse(answer)).toEqual({ ok: true });
 });
@@ -113,3 +113,28 @@ test('a CLI timeout override allows slow model checks without changing the saved
     expect(JSON.parse(await readFile(path, 'utf8')).ai.timeoutMs).toBe(1000);
   } finally { await rm(directory, { recursive: true }); }
 }, 10_000);
+
+test('CLI generation overrides omit saved output and reasoning options without rewriting settings', async () => {
+  let calls = 0;
+  const origin = mock(async request => {
+    calls++;
+    const body = await request.json() as any;
+    for (const key of ['max_tokens', 'reasoning_effort', 'enable_thinking', 'chat_template_kwargs']) expect(body[key]).toBeUndefined();
+    return Response.json({ choices: [{ message: { content: body.response_format ? '{"ok":true}' : 'OK' } }] });
+  });
+  const directory = await mkdtemp(join(tmpdir(), 'cstack-generation-check-'));
+  try {
+    const path = join(directory, 'config.json');
+    await saveConfig({ version: 1, hosts: {}, ai: { baseUrl: origin, model: 'fixture', apiKey: 'fake-key', maxOutputTokens: 20_000,
+      reasoningEffort: 'max', extraBody: { enable_thinking: true, chat_template_kwargs: { thinking: true } } } }, path);
+    const before = await readFile(path, 'utf8');
+    const child = Bun.spawn([process.execPath, 'src/cli.ts', '--check-ai', '--no-reasoning', '--max-output-tokens', '0'], {
+      env: { ...process.env, CHANGE_STACK_CONFIG: path }, stdout: 'pipe', stderr: 'pipe',
+    });
+    const output = await new Response(child.stdout).text();
+    expect(await child.exited).toBe(0);
+    expect(output).toContain('JSON completion: OK');
+    expect(calls).toBe(2);
+    expect(await readFile(path, 'utf8')).toBe(before);
+  } finally { await rm(directory, { recursive: true }); }
+});

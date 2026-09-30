@@ -2,6 +2,7 @@ import { changeUnits, wholeRanges, type ChangeUnit } from './changes';
 import { serviceJson } from './network';
 import { serviceUrl } from './target';
 import { diagnose, diagnosticReason, ModelError } from './diagnostics';
+import { retryModelRequest, serialModelRequest } from './model-requests';
 import type { RepositoryReader, RepositoryRequest } from './repository';
 import type { AIConfig, Analysis, Layer, LayerGroup, LayerPart, Review } from './types';
 
@@ -79,50 +80,72 @@ function bounded(value: number | undefined, fallback: number, min: number, max: 
 }
 
 let modelRequestNumber = 0;
-export async function complete(ai: AIConfig, user: string, json = false): Promise<string> {
+export async function complete(ai: AIConfig, user: string, json = false, onProgress?: (message: string) => void): Promise<string> {
   const inputLimit = bounded(ai.maxContextChars, MAX_CONTEXT, 8_000, 200_000);
-  const outputLimit = bounded(ai.maxOutputTokens, ai.reasoningEffort ? 16_000 : json ? 3_000 : 1_500, 1_000, 32_000);
+  const outputLimit = ai.maxOutputTokens === undefined || ai.maxOutputTokens === 0 ? undefined : bounded(ai.maxOutputTokens, 3000, 1_000, 32_000);
   const timeoutMs = bounded(ai.timeoutMs, ai.serviceTier === 'flex' ? 600_000 : 120_000, 1_000, 600_000);
   const base = serviceUrl(ai.baseUrl).toString().replace(/\/$/, '');
   const openRouter = new URL(base).hostname === 'openrouter.ai';
-  const stage = `model.request.${++modelRequestNumber}`;
-  const started = performance.now();
-  diagnose({ stage: `${stage}.started`, origin: new URL(base).origin, model: ai.model, inputChars: Math.min(user.length, inputLimit),
-    maxOutputTokens: outputLimit, timeoutMs, json: json && ai.jsonMode !== false, reasoningEffort: ai.reasoningEffort, serviceTier: ai.serviceTier });
-  try {
-    const headers = new Headers(ai.customHeaders);
-    headers.set('Authorization', `Bearer ${ai.apiKey}`);
-    headers.set('Content-Type', 'application/json');
-    const response = await serviceJson<any>(`${base}/chat/completions`, new URL(base).origin, {
-      method: 'POST', headers,
-      body: JSON.stringify({ ...ai.extraBody, model: ai.model, messages: [{ role: 'system', content: systemPrompt(ai) }, { role: 'user', content: user.slice(0, inputLimit) }],
-        stream: false, max_tokens: outputLimit,
-        ...(ai.reasoningEffort ? openRouter ? { reasoning: { effort: ai.reasoningEffort, exclude: true } }
-          : { reasoning_effort: ai.reasoningEffort } : ai.extraBody?.reasoning_effort || ai.extraBody?.reasoning ? {} : { temperature: 0.2 }),
-        ...(ai.temperature !== undefined ? { temperature: ai.temperature } : {}),
-        ...(json && ai.jsonMode !== false ? { response_format: { type: 'json_object' } } : {}),
-        ...(ai.serviceTier ? { service_tier: ai.serviceTier } : {}),
-        ...(openRouter && ai.serviceTier ? { provider: { only: ['OpenAI'], allow_fallbacks: false } } : {}),
-      }),
-    }, timeoutMs);
-    if (ai.serviceTier && response.service_tier !== ai.serviceTier) {
-      throw new ModelError('The model endpoint did not confirm the requested processing tier.');
+  const extra = { ...ai.extraBody };
+  for (const field of ['model', 'messages', 'stream', 'max_tokens', 'max_completion_tokens', 'response_format']) delete extra[field];
+  if (ai.reasoningEnabled === false) {
+    for (const field of ['reasoning', 'reasoning_effort', 'enable_thinking']) delete extra[field];
+    const template = extra.chat_template_kwargs;
+    if (template && typeof template === 'object' && !Array.isArray(template)) {
+      const options = { ...template } as Record<string, unknown>;
+      delete options.thinking;
+      if (Object.keys(options).length) extra.chat_template_kwargs = options;
+      else delete extra.chat_template_kwargs;
     }
-    const finish = response.choices?.[0]?.finish_reason;
-    if (finish === 'length') throw new ModelError('The model reached its output-token limit. Increase --max-output-tokens.');
-    if (finish === 'content_filter') throw new ModelError('The model response was blocked by its content filter.');
-    const content = response.choices?.[0]?.message?.content;
-    if (typeof content !== 'string' || !content.trim()) throw new ModelError('The model endpoint did not return a chat completion.');
-    diagnose({ stage: `${stage}.completed`, elapsedMs: Math.round(performance.now() - started),
-      finishReason: ['stop', 'tool_calls', 'function_call'].includes(finish) ? finish : undefined });
-    return content;
-  } catch (error) {
-    if (diagnosticReason(error) === 'The model request timed out.') {
-      error = new ModelError(`The model request timed out after ${timeoutMs / 1000} ${timeoutMs === 1000 ? 'second' : 'seconds'}. Increase --model-timeout or reduce --max-context-chars.`);
-    }
-    diagnose({ stage: `${stage}.failed`, elapsedMs: Math.round(performance.now() - started), error: diagnosticReason(error) });
-    throw error;
   }
+  const effort = ai.reasoningEnabled === false ? undefined : ai.reasoningEffort;
+  const stage = `model.request.${++modelRequestNumber}`;
+  const queueKey = JSON.stringify([new URL(base).origin, ai.apiKey]);
+  return serialModelRequest(queueKey, async () => {
+    const started = performance.now();
+    diagnose({ stage: `${stage}.started`, origin: new URL(base).origin, model: ai.model, inputChars: Math.min(user.length, inputLimit),
+      maxOutputTokens: outputLimit, timeoutMs, json: json && ai.jsonMode !== false, reasoningEffort: effort, serviceTier: ai.serviceTier });
+    try {
+      const headers = new Headers(ai.customHeaders);
+      headers.set('Authorization', `Bearer ${ai.apiKey}`);
+      headers.set('Content-Type', 'application/json');
+      const response = await retryModelRequest(remaining => serviceJson<any>(`${base}/chat/completions`, new URL(base).origin, {
+        method: 'POST', headers,
+        body: JSON.stringify({ ...extra, model: ai.model, messages: [{ role: 'system', content: systemPrompt(ai) }, { role: 'user', content: user.slice(0, inputLimit) }],
+          stream: false, ...(outputLimit === undefined ? {} : { max_tokens: outputLimit }),
+          ...(effort ? openRouter ? { reasoning: { effort, exclude: true } }
+            : { reasoning_effort: effort } : extra.reasoning_effort || extra.reasoning ? {} : { temperature: 0.2 }),
+          ...(ai.temperature !== undefined ? { temperature: ai.temperature } : {}),
+          ...(json && ai.jsonMode !== false ? { response_format: { type: 'json_object' } } : {}),
+          ...(ai.serviceTier ? { service_tier: ai.serviceTier } : {}),
+          ...(openRouter && ai.serviceTier ? { provider: { only: ['OpenAI'], allow_fallbacks: false } } : {}),
+        }),
+      }, remaining), timeoutMs, retry => {
+        diagnose({ stage: `${stage}.retry`, ...retry });
+        onProgress?.(`Waiting ${Math.ceil(retry.delayMs / 1000)}s before retry ${retry.attempt}/12 (HTTP ${retry.status})`);
+      });
+      if (ai.serviceTier && response.service_tier !== ai.serviceTier) {
+        throw new ModelError('The model endpoint did not confirm the requested processing tier.');
+      }
+      const finish = response.choices?.[0]?.finish_reason;
+      if (finish === 'length') throw new ModelError('The model reached its output-token limit. Set or increase --max-output-tokens.');
+      if (finish === 'content_filter') throw new ModelError('The model response was blocked by its content filter.');
+      const content = response.choices?.[0]?.message?.content;
+      if (typeof content !== 'string' || !content.trim()) throw new ModelError('The model endpoint did not return a chat completion.');
+      diagnose({ stage: `${stage}.completed`, elapsedMs: Math.round(performance.now() - started),
+        finishReason: ['stop', 'tool_calls', 'function_call'].includes(finish) ? finish : undefined });
+      return content;
+    } catch (error) {
+      if (diagnosticReason(error) === 'The model request timed out.') {
+        error = new ModelError(`The model request timed out after ${timeoutMs / 1000} ${timeoutMs === 1000 ? 'second' : 'seconds'}. Increase --model-timeout or reduce --max-context-chars.`);
+      }
+      diagnose({ stage: `${stage}.failed`, elapsedMs: Math.round(performance.now() - started), error: diagnosticReason(error) });
+      throw error;
+    }
+  }, () => {
+    diagnose({ stage: `${stage}.queued` });
+    onProgress?.('Waiting for another model request');
+  });
 }
 
 export async function analyze(review: Review, ai: AIConfig, repository?: RepositoryReader, onProgress?: (message: string) => void): Promise<Analysis> {
@@ -145,7 +168,8 @@ export async function analyze(review: Review, ai: AIConfig, repository?: Reposit
   if (allUnits.some(u => u.lines.some(line => line.length > 2000))) warnings.push('Very long lines were shortened in model input. Full lines remain available in the diff.');
   const summaries: string[] = [], layers: Layer[] = [];
   for (const [index, units] of batches.entries()) {
-    onProgress?.(`Step 1/3 · Preparing review layers: batch ${index + 1}/${batches.length}`);
+    const activity = `Step 1/3 · Preparing review layers: batch ${index + 1}/${batches.length}`;
+    onProgress?.(activity);
     const context = units.map(evidence);
     const prompt = `Organize these numbered changed patch rows into logical review layers. Return ONLY JSON: {"summary":"...","layers":[{"title":"...","category":"...","summary":"...","ranges":[{"changeId":"exact supplied ID","first":1,"last":3}]}]}. first and last are the numbers of the first and last row to include, both included, as shown before each row; they are NOT source line numbers. To take a whole changeId, use first 1 and last equal to its final row number. Every supplied row should belong to exactly one layer. You may split a changeId at ANY row and combine ranges across files. A single file can appear in multiple layers. Group by purpose, not file boundaries. Preserve removed and added rows; keep replacements together when they represent the same concern. Use short titles and 2–4 simple sentences per layer. Highlight uncertainties without inventing bugs. category is a 1–3 word label for the kind of change that helps a reviewer remember the layer, written freely (for example "New feature", "Backend fix", "UI change", "Refactor", "Test coverage", "Build config").
 Review data:
@@ -153,7 +177,7 @@ ${JSON.stringify({ title: review.title.slice(0, 500), description: review.descri
     try {
       if (index >= 12) throw new ModelError('The 12-batch model budget was reached.');
       if (prompt.length > contextLimit) throw new ModelError('This batch exceeds the input budget. Increase --max-context-chars.');
-      const raw = (await complete(ai, prompt, true)).trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+      const raw = (await complete(ai, prompt, true, message => onProgress?.(`${activity} · ${message}`))).trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
       const parsed = validateRangeLayers(JSON.parse(raw), units, `batch-${index}`);
       summaries.push(parsed.summary); layers.push(...parsed.layers);
     } catch (error) {
@@ -169,35 +193,35 @@ ${JSON.stringify({ title: review.title.slice(0, 500), description: review.descri
   let summary = summaries.join('\n\n') || localAnalysis(review).summary;
   let ordered = layers, groups: LayerGroup[] | undefined;
   if (summaries.length && layers.length > 1) {
-    onProgress?.(`Step 2/3 · Arranging ${layers.length} review layers`);
-    try { ({ layers: ordered, groups } = validateOrganization(parseJson(await complete(ai, organizePrompt(layers), true)), layers)); }
+    const activity = `Step 2/3 · Arranging ${layers.length} review layers`;
+    onProgress?.(activity);
+    try { ({ layers: ordered, groups } = validateOrganization(parseJson(await complete(ai, organizePrompt(layers), true, message => onProgress?.(`${activity} · ${message}`))), layers)); }
     catch (error) { diagnose({ stage: 'layers.order.failed', error: diagnosticReason(error) }); warnings.push(`Layer order, groups, and dependencies could not be prepared. ${diagnosticReason(error)} Layers are shown in batch order.`); }
   }
   const unitsById = new Map(allUnits.map(u => [u.id, u]));
   const candidates = summaries.length ? ordered.filter(l => !/^fallback-|-remaining$/.test(l.id) && rowCount(l) >= 10)
     .sort((a, b) => rowCount(b) - rowCount(a)).slice(0, 30) : [];
   let failed = 0, completed = 0;
-  let summaryProgress = repository && summaries.length ? 'preparing review summary' : '';
-  const reportDetails = () => {
+  let summaryProgress = '';
+  const reportDetails = (note?: string) => {
     const details = candidates.length ? `Layer details: ${completed}/${candidates.length} completed` : '';
-    onProgress?.(`Step 3/3 · ${[details, summaryProgress].filter(Boolean).join(' · ') || 'Finalizing review layers'}`);
+    onProgress?.(`Step 3/3 · ${[details, summaryProgress, note].filter(Boolean).join(' · ') || 'Finalizing review layers'}`);
   };
   reportDetails();
-  const [parts] = await Promise.all([
-    mapLimit(candidates, 4, async layer => {
-      try { return await breakDownLayer(ai, review, layer, unitsById, contextLimit); } catch (error) { diagnose({ stage: 'layers.parts.failed', error: diagnosticReason(error) }); failed++; return []; }
-      finally { completed++; reportDetails(); }
-    }),
-    (async () => {
-      if (!repository || !summaries.length) return;
-      try {
-        summary = await summarizeRepository(review, ai, layers, repository, message => { summaryProgress = message; reportDetails(); });
-        summaryProgress = 'review summary ready';
-      }
-      catch (error) { summaryProgress = 'using change summaries'; diagnose({ stage: 'repository.summary.failed', error: diagnosticReason(error) }); warnings.push(`Repository summary could not be completed. ${diagnosticReason(error)} Showing the summaries of the changes instead.`); }
-      finally { reportDetails(); }
-    })(),
-  ]);
+  const parts: LayerPart[][] = [];
+  for (const layer of candidates) {
+    try { parts.push(await breakDownLayer(ai, review, layer, unitsById, contextLimit, reportDetails)); }
+    catch (error) { diagnose({ stage: 'layers.parts.failed', error: diagnosticReason(error) }); failed++; parts.push([]); }
+    finally { completed++; reportDetails(); }
+  }
+  if (repository && summaries.length) {
+    try {
+      summary = await summarizeRepository(review, ai, layers, repository, message => { summaryProgress = message; reportDetails(); });
+      summaryProgress = 'review summary ready';
+    }
+    catch (error) { summaryProgress = 'using change summaries'; diagnose({ stage: 'repository.summary.failed', error: diagnosticReason(error) }); warnings.push(`Repository summary could not be completed. ${diagnosticReason(error)} Showing the summaries of the changes instead.`); }
+    finally { reportDetails(); }
+  }
   if (failed) warnings.push(`${failed} layer breakdown${failed === 1 ? '' : 's'} could not be prepared. Those layers show their summary only.`);
   const partsById = new Map(candidates.map((layer, i) => [layer.id, parts[i]!]));
   return { summary, groups, layers: ordered.map(l => partsById.get(l.id)?.length ? { ...l, parts: partsById.get(l.id) } : l),
@@ -206,15 +230,6 @@ ${JSON.stringify({ title: review.title.slice(0, 500), description: review.descri
 
 const parseJson = (raw: string) => JSON.parse(raw.trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, ''));
 const rowCount = (layer: Layer) => (layer.ranges ?? []).reduce((n, r) => n + r.end - r.start + 1, 0);
-
-async function mapLimit<T, R>(items: T[], limit: number, run: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) { const i = next++; results[i] = await run(items[i]!); }
-  }));
-  return results;
-}
 
 function organizePrompt(layers: Layer[]): string {
   return `Arrange these review layers for a reviewer. Return ONLY JSON: {"order":["layer id"],"groups":[{"title":"...","layers":["layer id"]}],"dependencies":[{"layer":"layer id","dependsOn":["layer id"]}]}.
@@ -250,7 +265,7 @@ export function validateOrganization(value: unknown, layers: Layer[]): { layers:
   return { groups, layers: order.map(id => dependencies.get(id)?.length ? { ...byId.get(id)!, dependsOn: dependencies.get(id) } : byId.get(id)!) };
 }
 
-async function breakDownLayer(ai: AIConfig, review: Review, layer: Layer, units: Map<string, ChangeUnit>, contextLimit: number): Promise<LayerPart[]> {
+async function breakDownLayer(ai: AIConfig, review: Review, layer: Layer, units: Map<string, ChangeUnit>, contextLimit: number, onProgress?: (message: string) => void): Promise<LayerPart[]> {
   const changes = new Map<string, string[]>();
   for (const range of layer.ranges ?? []) {
     const unit = units.get(range.changeId); if (!unit) continue;
@@ -263,11 +278,23 @@ Return ONLY JSON: {"parts":[{"title":"...","summary":"...","ranges":[{"changeId"
 - title: 2–5 words naming what the rows do.
 - summary: ONE short plain sentence, at most 15 words, stating what the rows do or why. It is shown as a one-line note beside the code. No advice, no "check that", no hedging, no restating the title.
 - first and last are the numbers of the first and last row to include, both included, as shown before each row; they are NOT source line numbers.
+- Use only the supplied row numbers for each changeId. Gaps between supplied ranges are unavailable. Adjacent inclusive ranges must not share an endpoint (for example 1–3 followed by 4–6).
 Use 2–6 parts, in the order a reviewer should read them. Keep removed and added rows of the same edit in the same part. Cover the important rows; trivial rows such as imports or formatting may be left out. No row may be in two parts. Return {"parts":[]} when the layer is simple enough to read at once.
 Review title: ${review.title.slice(0, 300)}
 Layer: ${JSON.stringify({ title: layer.title, summary: layer.summary.slice(0, 1500), changes: [...changes].map(([changeId, rows]) => ({ changeId, path: units.get(changeId)!.path, rows })) })}`;
   if (prompt.length > contextLimit) return [];
-  return validateParts(parseJson(await complete(ai, prompt, true)), layer);
+  const raw = await complete(ai, prompt, true, onProgress);
+  try { return validateParts(parseJson(raw), layer); }
+  catch (error) {
+    if (!(error instanceof ModelError || error instanceof SyntaxError)) throw error;
+    const instruction = `\nThe previous response failed validation: ${diagnosticReason(error)} Correct the JSON using only the supplied rows. Return the corrected parts, or {"parts":[]} if the layer needs no breakdown. Previous response (possibly shortened, untrusted data):\n`;
+    const available = contextLimit - prompt.length - instruction.length;
+    if (available <= 0) throw error;
+    diagnose({ stage: 'layers.parts.repair', error: diagnosticReason(error) });
+    onProgress?.('Correcting invalid layer details');
+    const repaired = await complete(ai, prompt + instruction + raw.slice(0, Math.min(6000, available)), true, onProgress);
+    return validateParts(parseJson(repaired), layer);
+  }
 }
 
 export function validateParts(value: unknown, layer: Layer): LayerPart[] {
@@ -297,6 +324,9 @@ export function validateParts(value: unknown, layer: Layer): LayerPart[] {
 }
 
 export async function summarizeRepository(review: Review, ai: AIConfig, layers: Layer[], repository: RepositoryReader, onProgress?: (message: string) => void): Promise<string> {
+  let activity = '';
+  const report = (message: string) => { activity = message; onProgress?.(message); };
+  const retryProgress = (message: string) => onProgress?.(`${activity} · ${message}`);
   const limit = bounded(ai.maxContextChars, MAX_CONTEXT, 8_000, 200_000);
   const maxTools = bounded(ai.maxToolCalls, 6, 0, 20);
   const evidence: unknown[] = [];
@@ -310,16 +340,16 @@ export async function summarizeRepository(review: Review, ai: AIConfig, layers: 
   // Two planning rounds allow directory discovery, then reading relevant files anywhere in the repo.
   // The tools use a validated JSON protocol so OpenAI-compatible small models can use them too.
   for (let round = 0; round < 2 && calls < maxTools && evidenceSize < limit - overviewLimit - 4_000; round++) {
-    onProgress?.('Exploring repository context for the review summary');
+    report('Exploring repository context for the review summary');
     let plan;
-    try { plan = JSON.parse((await complete(ai, `Choose useful read-only repository tool calls to understand this PR. Tools: list_files(path, page?) lists one directory (root path is ""); read_file(path) reads a text file at the PR head commit. Return only JSON {"requests":[{"tool":"list_files"|"read_file","path":"...","page":1}]}. You may request at most ${maxTools - calls} calls, or no calls if you have enough evidence. No other tools exist.\nPR evidence (may be shortened): ${context}\nTool results: ${JSON.stringify(evidence)}`, true)).trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '')); }
+    try { plan = JSON.parse((await complete(ai, `Choose useful read-only repository tool calls to understand this PR. Tools: list_files(path, page?) lists one directory (root path is ""); read_file(path) reads a text file at the PR head commit. Return only JSON {"requests":[{"tool":"list_files"|"read_file","path":"...","page":1}]}. You may request at most ${maxTools - calls} calls, or no calls if you have enough evidence. No other tools exist.\nPR evidence (may be shortened): ${context}\nTool results: ${JSON.stringify(evidence)}`, true, retryProgress)).trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '')); }
     catch (error) { diagnose({ stage: 'repository.planning.failed', error: diagnosticReason(error) }); break; }
     if (!Array.isArray(plan?.requests)) break;
     if (!plan.requests.length) break;
     for (const request of plan.requests.slice(0, maxTools - calls) as RepositoryRequest[]) {
       if (evidenceSize >= limit - overviewLimit - 4_000) break;
       calls++;
-      onProgress?.(`Reading repository context: ${calls} ${calls === 1 ? 'read' : 'reads'}`);
+      report(`Reading repository context: ${calls} ${calls === 1 ? 'read' : 'reads'}`);
       let result: unknown;
       try { result = await repository(request); } catch { result = { error: 'File or directory unavailable, invalid, or above the read budget.' }; }
       const remaining = limit - overviewLimit - 4_000 - evidenceSize;
@@ -330,8 +360,8 @@ export async function summarizeRepository(review: Review, ai: AIConfig, layers: 
     }
   }
   // No tool requests can be executed from this final response, even if the model asks for more.
-  onProgress?.('Writing the review summary');
-  const final = JSON.parse((await complete(ai, `Repository exploration has ended. Produce the final short summary of the whole PR, in 3–5 simple sentences. Explain the main change, its purpose, and any important uncertainty. Do not list every file. Return only JSON {"summary":"..."}. You cannot call any more tools. You inspected only a bounded sample of repository context, not the entire repo. Do not claim otherwise. Overview truncated: ${overviewTruncated}. Tool calls used: ${calls}/${maxTools}.\nPR evidence: ${context}\nTool results: ${JSON.stringify(evidence)}`, true)).trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, ''));
+  report('Writing the review summary');
+  const final = JSON.parse((await complete(ai, `Repository exploration has ended. Produce the final short summary of the whole PR, in 3–5 simple sentences. Explain the main change, its purpose, and any important uncertainty. Do not list every file. Return only JSON {"summary":"..."}. You cannot call any more tools. You inspected only a bounded sample of repository context, not the entire repo. Do not claim otherwise. Overview truncated: ${overviewTruncated}. Tool calls used: ${calls}/${maxTools}.\nPR evidence: ${context}\nTool results: ${JSON.stringify(evidence)}`, true, retryProgress)).trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, ''));
   if (typeof final.summary !== 'string' || !final.summary.trim()) throw new ModelError('Invalid PR summary.');
   return final.summary.slice(0, 3_000);
 }

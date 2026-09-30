@@ -27,6 +27,7 @@ export interface AIConfig {
   temperature?: number;
   timeoutMs?: number;
   jsonMode?: boolean;
+  reasoningEnabled?: boolean;
 }
 export interface Config { version: 1; hosts: Record<string, HostConfig>; ai?: AIConfig; aiSetupSkipped?: boolean; defaultLanguage?: 'en' | 'ru' }
 export interface ChangedFile {
