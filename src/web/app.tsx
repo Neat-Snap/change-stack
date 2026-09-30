@@ -117,9 +117,10 @@ function ReviewWorkspace({ session }: { session: Session }) {
       <SidebarContent className="gap-0 overflow-hidden!">
         <Collapsible open={layersOpen} onOpenChange={setLayersOpen}
           className={`flex min-h-0 flex-col ${layersOpen ? treeOpen ? 'max-h-[45%] flex-[0_1_45%]' : 'flex-1' : 'shrink-0'}`}>
-          <div className="px-3">
-            <CollapsibleTrigger className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-muted-foreground hover:text-foreground" aria-label="Layers">
-              <ChevronRight className={`size-3 shrink-0 transition-transform ${layersOpen ? 'rotate-90' : ''}`} />Layers
+          <div className="shrink-0 px-3 pb-2 pt-1">
+            <CollapsibleTrigger className="flex h-8 w-full items-center justify-between rounded-md bg-sidebar-accent/50 px-3 text-left text-foreground hover:bg-sidebar-accent" aria-label="Layers">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">Layers</span>
+              <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${layersOpen ? 'rotate-90' : ''}`} />
             </CollapsibleTrigger>
           </div>
           <CollapsibleContent className="min-h-0 flex-1 overflow-hidden" data-testid="layers-panel">
@@ -139,13 +140,13 @@ function ReviewWorkspace({ session }: { session: Session }) {
           </CollapsibleContent>
         </Collapsible>
         <Collapsible open={treeOpen} onOpenChange={setTreeOpen} className={`flex min-h-0 flex-col ${treeOpen ? 'flex-1' : 'shrink-0'}`}>
-          <div className="flex shrink-0 items-center gap-2 px-3 py-1">
-            <CollapsibleTrigger className="flex h-7 shrink-0 items-center gap-2 rounded-md px-2 text-muted-foreground hover:text-foreground" aria-label={treeOpen ? 'Collapse file tree' : 'Expand file tree'}>
-              <ChevronRight className={`size-3 transition-transform ${treeOpen ? 'rotate-90' : ''}`} /><Files className="size-3.5" />
+          <div className="shrink-0 px-3 pb-2 pt-3">
+            <CollapsibleTrigger className="flex h-8 w-full items-center justify-between rounded-md bg-sidebar-accent/50 px-3 text-left text-foreground hover:bg-sidebar-accent" aria-label={treeOpen ? 'Collapse file tree' : 'Expand file tree'}>
+              <span className="text-[11px] font-semibold uppercase tracking-wider">Files</span>
+              <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${treeOpen ? 'rotate-90' : ''}`} />
             </CollapsibleTrigger>
-            <Separator className="flex-1" />
           </div>
-          <CollapsibleContent className="min-h-0 flex-1 overflow-hidden px-3 pb-3" data-testid="tree-panel">
+          <CollapsibleContent className="min-h-0 flex-1 overflow-hidden pl-5 pr-3 pb-3" data-testid="tree-panel">
             <Tree key={activeLayer} files={files} select={chooseFile} />
           </CollapsibleContent>
         </Collapsible>

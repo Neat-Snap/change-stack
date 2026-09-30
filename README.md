@@ -78,7 +78,7 @@ Builds download dependencies from npm; the shipped application does not. Distrib
 ## Review UI
 
 - Logical review layers generated in bounded batches by your model, with exact file-reference validation and local grouping as a fallback.
-- A small shadcn sidebar for switching layers and files, with an accessible mobile drawer and extension-specific file icons. Layers and the file tree collapse independently; each has its own scroll area, and long layer lists leave space for the tree. There is no Files heading or layer hover tooltip. Previous/next controls in the main header navigate layers even when their list is collapsed.
+- A small shadcn sidebar for switching layers and files, with an accessible mobile drawer and extension-specific file icons. Layers and the file tree collapse independently; each has its own scroll area, and long layer lists leave space for the tree. Distinct Layers and Files headers have their collapse arrows on the right; spacing separates the sections without a horizontal rule. Layer hover tooltips are removed. Previous/next controls in the main header navigate layers even when their list is collapsed.
 - Pierre's file tree and syntax-highlighted split/unified diffs. Each layer opens directly to its changes.
 - Four selectable themes: GitHub dark/light and GitLab dark/light. The initial GitHub theme follows your system preference. All theme assets are local.
 - Each layer shows a short explanation in a bordered Markdown box above its diffs; All changes shows the whole PR summary. Lists, emphasis, inline code, code blocks, and tables are supported. Raw HTML and external images are not loaded.

@@ -45,7 +45,8 @@ try {
   await expect(page.getByTestId('tree-panel')).toBeHidden();
   await page.getByRole('button', { name: 'Expand file tree' }).click();
   await expect(page.getByTestId('tree-panel')).toBeVisible();
-  await expect(page.getByText('Files', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Files', { exact: true })).toBeVisible();
+  await expect(page.locator('[data-slot="sidebar-content"] [data-slot="separator"]')).toHaveCount(0);
   await page.screenshot({ path: 'dist/demo-overview.png', fullPage: true });
   const fontBefore = await page.getByTestId('layer-button').nth(1).evaluate(e => getComputedStyle(e).fontWeight);
   await page.getByTestId('layer-button').nth(1).click();
