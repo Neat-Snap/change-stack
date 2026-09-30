@@ -7,7 +7,7 @@ import { parseArgs } from 'node:util';
 import { configPath, loadConfig, promptPath, saveConfig } from './core/config';
 import { parseTarget, serviceUrl, tokenCreationUrl } from './core/target';
 import { fetchReview, validateHost } from './core/providers';
-import { analyze, complete, localAnalysis } from './core/analysis';
+import { analyze, complete, localAnalysis, preparationMessage } from './core/analysis';
 import { reviewTools, type ReviewTools } from './core/review-tools';
 import { repositoryReader } from './core/repository';
 import { readFile } from 'node:fs/promises';
@@ -207,7 +207,7 @@ async function main() {
       spinner.start('Preparing review layers with your configured model');
       try {
         analysis = await analyze(review, ai, repositoryReader(review, host), message => spinner.message(message));
-        spinner.stop(analysis.source === 'model' ? 'Review layers prepared' : 'Model explanations unavailable; showing local groups');
+        spinner.stop(preparationMessage(analysis));
         for (const warning of analysis.warnings ?? []) p.log.warn(warning);
       }
       catch (e) { spinner.stop('Review preparation failed'); throw e; }

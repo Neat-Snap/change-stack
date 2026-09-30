@@ -26,6 +26,15 @@ export function localAnalysis(review: Review): Analysis {
       summary: `${files.length} changed file${files.length === 1 ? '' : 's'}. Grouped by path; this is not an AI interpretation.` })) };
 }
 
+export function preparationMessage(analysis: Analysis): string {
+  const unexplained = analysis.layers.filter(layer => /^fallback-|-remaining$/.test(layer.id)).length;
+  if (analysis.source === 'local' || (unexplained > 0 && unexplained === analysis.layers.length)) {
+    return 'Model layering unavailable; showing local groups';
+  }
+  if (unexplained) return 'Review layers partially prepared; some changes have no model grouping';
+  return analysis.warnings.length ? 'Review layers prepared with warnings' : 'Review layers prepared';
+}
+
 // Models answer with inclusive {first, last} rows; start/end is accepted for older callers.
 function rowRange(range: any): { changeId: unknown; start: number; end: number } {
   return { changeId: range?.changeId, start: range?.first ?? range?.start, end: range?.last ?? range?.end };

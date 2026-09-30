@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { analyze } from '../src/core/analysis';
+import { analyze, preparationMessage } from '../src/core/analysis';
 import { changeUnits } from '../src/core/changes';
 import { demoSession } from '../src/core/demo';
 import { makePatch } from '../src/core/providers';
@@ -49,10 +49,34 @@ test('repairs overlapping parts once, validates the repair, and summarizes after
       expect(result.layers[0]!.parts).toHaveLength(2);
       expect(result.layers[0]!.parts![1]!.ranges[0]!.start).toBe(7);
       expect(result.warnings).toEqual([]);
+      expect(preparationMessage(result)).toBe('Review layers prepared');
     } else {
       expect(result.layers[0]!.parts).toBeUndefined();
       expect(result.layers[0]!.ranges).toEqual([{ changeId, start: 1, end: 12 }]);
       expect(result.warnings.join(' ')).toContain('1 layer breakdown could not be prepared');
+      expect(preparationMessage(result)).toBe('Review layers prepared with warnings');
     }
+  }
+});
+
+test('reports partial or unavailable layering while retaining every changed row', async () => {
+  for (const assigned of [false, true]) {
+    const files = [file, { ...file, path: 'src/other.ts', oldPath: 'src/other.ts' }];
+    const units = files.flatMap(changeUnits);
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+      const prompt = (await request.json() as any).messages[1].content as string;
+      const content = prompt.startsWith('Organize these numbered')
+        ? { summary: 'Updates values.', layers: assigned ? [{ title: 'Values', summary: 'Updates values.', ranges: [{ changeId: units[0]!.id, first: 1, last: 12 }] }] : [] }
+        : prompt.startsWith('Arrange these review layers') ? { order: [], groups: [], dependencies: [] } : { parts: [] };
+      return Response.json({ choices: [{ message: { content: JSON.stringify(content) } }] });
+    } }); servers.push(server);
+    const result = await analyze({ ...demoSession().review, files }, { baseUrl: server.url.origin, model: 'fixture', apiKey: 'fake-key' });
+    expect(preparationMessage(result)).toBe(assigned
+      ? 'Review layers partially prepared; some changes have no model grouping'
+      : 'Model layering unavailable; showing local groups');
+    const rows = result.layers.flatMap(layer => layer.ranges ?? [])
+      .flatMap(range => Array.from({ length: range.end - range.start + 1 }, (_, i) => `${range.changeId}:${range.start + i}`));
+    expect(new Set(rows).size).toBe(24);
+    expect(rows).toHaveLength(24);
   }
 });
