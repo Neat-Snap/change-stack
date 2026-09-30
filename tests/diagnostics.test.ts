@@ -3,7 +3,7 @@ import { analyze, complete } from '../src/core/analysis';
 import { configureDiagnostics, diagnosticReason } from '../src/core/diagnostics';
 import { demoSession } from '../src/core/demo';
 import { saveConfig } from '../src/core/config';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -88,3 +88,28 @@ test('the CLI connection check diagnoses unsupported JSON mode without accessing
     expect(calls).toBe(4);
   } finally { await rm(directory, { recursive: true }); }
 });
+
+test('a CLI timeout override allows slow model checks without changing the saved timeout', async () => {
+  const origin = mock(async request => {
+    const body = await request.json() as any;
+    await Bun.sleep(1200);
+    return Response.json({ choices: [{ message: { content: body.messages[1].content.includes('JSON') ? '{"ok":true}' : 'OK' } }] });
+  });
+  const directory = await mkdtemp(join(tmpdir(), 'cstack-timeout-check-'));
+  try {
+    const path = join(directory, 'config.json');
+    await saveConfig({ version: 1, hosts: {}, ai: { baseUrl: origin, model: 'test', apiKey: 'fake-key', timeoutMs: 1000 } }, path);
+    for (const override of [false, true]) {
+      const child = Bun.spawn([process.execPath, 'src/cli.ts', '--check-ai', '--debug', ...(override ? ['--model-timeout', '3'] : [])], {
+        env: { ...process.env, CHANGE_STACK_CONFIG: path }, stdout: 'pipe', stderr: 'pipe',
+      });
+      const [stdout, stderr] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
+      expect(await child.exited).toBe(override ? 0 : 1);
+      expect(stderr).toContain(`"timeoutMs":${override ? 3000 : 1000}`);
+      if (override) expect(stdout).toContain('JSON completion: OK');
+      else expect(stderr).toContain('timed out after 1 second. Increase --model-timeout');
+      expect(stdout + stderr).not.toContain('fake-key');
+    }
+    expect(JSON.parse(await readFile(path, 'utf8')).ai.timeoutMs).toBe(1000);
+  } finally { await rm(directory, { recursive: true }); }
+}, 10_000);

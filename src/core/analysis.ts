@@ -82,12 +82,13 @@ let modelRequestNumber = 0;
 export async function complete(ai: AIConfig, user: string, json = false): Promise<string> {
   const inputLimit = bounded(ai.maxContextChars, MAX_CONTEXT, 8_000, 200_000);
   const outputLimit = bounded(ai.maxOutputTokens, ai.reasoningEffort ? 16_000 : json ? 3_000 : 1_500, 1_000, 32_000);
+  const timeoutMs = bounded(ai.timeoutMs, ai.serviceTier === 'flex' ? 600_000 : 120_000, 1_000, 600_000);
   const base = serviceUrl(ai.baseUrl).toString().replace(/\/$/, '');
   const openRouter = new URL(base).hostname === 'openrouter.ai';
   const stage = `model.request.${++modelRequestNumber}`;
   const started = performance.now();
   diagnose({ stage: `${stage}.started`, origin: new URL(base).origin, model: ai.model, inputChars: Math.min(user.length, inputLimit),
-    maxOutputTokens: outputLimit, json: json && ai.jsonMode !== false, reasoningEffort: ai.reasoningEffort, serviceTier: ai.serviceTier });
+    maxOutputTokens: outputLimit, timeoutMs, json: json && ai.jsonMode !== false, reasoningEffort: ai.reasoningEffort, serviceTier: ai.serviceTier });
   try {
     const headers = new Headers(ai.customHeaders);
     headers.set('Authorization', `Bearer ${ai.apiKey}`);
@@ -103,7 +104,7 @@ export async function complete(ai: AIConfig, user: string, json = false): Promis
         ...(ai.serviceTier ? { service_tier: ai.serviceTier } : {}),
         ...(openRouter && ai.serviceTier ? { provider: { only: ['OpenAI'], allow_fallbacks: false } } : {}),
       }),
-    }, ai.timeoutMs ?? (ai.serviceTier === 'flex' ? 600_000 : 120_000));
+    }, timeoutMs);
     if (ai.serviceTier && response.service_tier !== ai.serviceTier) {
       throw new ModelError('The model endpoint did not confirm the requested processing tier.');
     }
@@ -116,12 +117,16 @@ export async function complete(ai: AIConfig, user: string, json = false): Promis
       finishReason: ['stop', 'tool_calls', 'function_call'].includes(finish) ? finish : undefined });
     return content;
   } catch (error) {
+    if (diagnosticReason(error) === 'The model request timed out.') {
+      error = new ModelError(`The model request timed out after ${timeoutMs / 1000} ${timeoutMs === 1000 ? 'second' : 'seconds'}. Increase --model-timeout or reduce --max-context-chars.`);
+    }
     diagnose({ stage: `${stage}.failed`, elapsedMs: Math.round(performance.now() - started), error: diagnosticReason(error) });
     throw error;
   }
 }
 
-export async function analyze(review: Review, ai: AIConfig, repository?: RepositoryReader): Promise<Analysis> {
+export async function analyze(review: Review, ai: AIConfig, repository?: RepositoryReader, onProgress?: (message: string) => void): Promise<Analysis> {
+  onProgress?.('Preparing changed files for review');
   const contextLimit = bounded(ai.maxContextChars, MAX_CONTEXT, 8_000, 200_000);
   const batches: ChangeUnit[][] = [];
   let batch: ChangeUnit[] = [], size = 0;
@@ -140,6 +145,7 @@ export async function analyze(review: Review, ai: AIConfig, repository?: Reposit
   if (allUnits.some(u => u.lines.some(line => line.length > 2000))) warnings.push('Very long lines were shortened in model input. Full lines remain available in the diff.');
   const summaries: string[] = [], layers: Layer[] = [];
   for (const [index, units] of batches.entries()) {
+    onProgress?.(`Step 1/3 · Preparing review layers: batch ${index + 1}/${batches.length}`);
     const context = units.map(evidence);
     const prompt = `Organize these numbered changed patch rows into logical review layers. Return ONLY JSON: {"summary":"...","layers":[{"title":"...","category":"...","summary":"...","ranges":[{"changeId":"exact supplied ID","first":1,"last":3}]}]}. first and last are the numbers of the first and last row to include, both included, as shown before each row; they are NOT source line numbers. To take a whole changeId, use first 1 and last equal to its final row number. Every supplied row should belong to exactly one layer. You may split a changeId at ANY row and combine ranges across files. A single file can appear in multiple layers. Group by purpose, not file boundaries. Preserve removed and added rows; keep replacements together when they represent the same concern. Use short titles and 2–4 simple sentences per layer. Highlight uncertainties without inventing bugs. category is a 1–3 word label for the kind of change that helps a reviewer remember the layer, written freely (for example "New feature", "Backend fix", "UI change", "Refactor", "Test coverage", "Build config").
 Review data:
@@ -163,21 +169,33 @@ ${JSON.stringify({ title: review.title.slice(0, 500), description: review.descri
   let summary = summaries.join('\n\n') || localAnalysis(review).summary;
   let ordered = layers, groups: LayerGroup[] | undefined;
   if (summaries.length && layers.length > 1) {
+    onProgress?.(`Step 2/3 · Arranging ${layers.length} review layers`);
     try { ({ layers: ordered, groups } = validateOrganization(parseJson(await complete(ai, organizePrompt(layers), true)), layers)); }
     catch (error) { diagnose({ stage: 'layers.order.failed', error: diagnosticReason(error) }); warnings.push(`Layer order, groups, and dependencies could not be prepared. ${diagnosticReason(error)} Layers are shown in batch order.`); }
   }
   const unitsById = new Map(allUnits.map(u => [u.id, u]));
   const candidates = summaries.length ? ordered.filter(l => !/^fallback-|-remaining$/.test(l.id) && rowCount(l) >= 10)
     .sort((a, b) => rowCount(b) - rowCount(a)).slice(0, 30) : [];
-  let failed = 0;
+  let failed = 0, completed = 0;
+  let summaryProgress = repository && summaries.length ? 'preparing review summary' : '';
+  const reportDetails = () => {
+    const details = candidates.length ? `Layer details: ${completed}/${candidates.length} completed` : '';
+    onProgress?.(`Step 3/3 · ${[details, summaryProgress].filter(Boolean).join(' · ') || 'Finalizing review layers'}`);
+  };
+  reportDetails();
   const [parts] = await Promise.all([
     mapLimit(candidates, 4, async layer => {
       try { return await breakDownLayer(ai, review, layer, unitsById, contextLimit); } catch (error) { diagnose({ stage: 'layers.parts.failed', error: diagnosticReason(error) }); failed++; return []; }
+      finally { completed++; reportDetails(); }
     }),
     (async () => {
       if (!repository || !summaries.length) return;
-      try { summary = await summarizeRepository(review, ai, layers, repository); }
-      catch (error) { diagnose({ stage: 'repository.summary.failed', error: diagnosticReason(error) }); warnings.push(`Repository summary could not be completed. ${diagnosticReason(error)} Showing the summaries of the changes instead.`); }
+      try {
+        summary = await summarizeRepository(review, ai, layers, repository, message => { summaryProgress = message; reportDetails(); });
+        summaryProgress = 'review summary ready';
+      }
+      catch (error) { summaryProgress = 'using change summaries'; diagnose({ stage: 'repository.summary.failed', error: diagnosticReason(error) }); warnings.push(`Repository summary could not be completed. ${diagnosticReason(error)} Showing the summaries of the changes instead.`); }
+      finally { reportDetails(); }
     })(),
   ]);
   if (failed) warnings.push(`${failed} layer breakdown${failed === 1 ? '' : 's'} could not be prepared. Those layers show their summary only.`);
@@ -278,7 +296,7 @@ export function validateParts(value: unknown, layer: Layer): LayerPart[] {
   return parts.length >= 2 ? parts : [];
 }
 
-export async function summarizeRepository(review: Review, ai: AIConfig, layers: Layer[], repository: RepositoryReader): Promise<string> {
+export async function summarizeRepository(review: Review, ai: AIConfig, layers: Layer[], repository: RepositoryReader, onProgress?: (message: string) => void): Promise<string> {
   const limit = bounded(ai.maxContextChars, MAX_CONTEXT, 8_000, 200_000);
   const maxTools = bounded(ai.maxToolCalls, 6, 0, 20);
   const evidence: unknown[] = [];
@@ -292,6 +310,7 @@ export async function summarizeRepository(review: Review, ai: AIConfig, layers: 
   // Two planning rounds allow directory discovery, then reading relevant files anywhere in the repo.
   // The tools use a validated JSON protocol so OpenAI-compatible small models can use them too.
   for (let round = 0; round < 2 && calls < maxTools && evidenceSize < limit - overviewLimit - 4_000; round++) {
+    onProgress?.('Exploring repository context for the review summary');
     let plan;
     try { plan = JSON.parse((await complete(ai, `Choose useful read-only repository tool calls to understand this PR. Tools: list_files(path, page?) lists one directory (root path is ""); read_file(path) reads a text file at the PR head commit. Return only JSON {"requests":[{"tool":"list_files"|"read_file","path":"...","page":1}]}. You may request at most ${maxTools - calls} calls, or no calls if you have enough evidence. No other tools exist.\nPR evidence (may be shortened): ${context}\nTool results: ${JSON.stringify(evidence)}`, true)).trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '')); }
     catch (error) { diagnose({ stage: 'repository.planning.failed', error: diagnosticReason(error) }); break; }
@@ -300,6 +319,7 @@ export async function summarizeRepository(review: Review, ai: AIConfig, layers: 
     for (const request of plan.requests.slice(0, maxTools - calls) as RepositoryRequest[]) {
       if (evidenceSize >= limit - overviewLimit - 4_000) break;
       calls++;
+      onProgress?.(`Reading repository context: ${calls} ${calls === 1 ? 'read' : 'reads'}`);
       let result: unknown;
       try { result = await repository(request); } catch { result = { error: 'File or directory unavailable, invalid, or above the read budget.' }; }
       const remaining = limit - overviewLimit - 4_000 - evidenceSize;
@@ -310,6 +330,7 @@ export async function summarizeRepository(review: Review, ai: AIConfig, layers: 
     }
   }
   // No tool requests can be executed from this final response, even if the model asks for more.
+  onProgress?.('Writing the review summary');
   const final = JSON.parse((await complete(ai, `Repository exploration has ended. Produce the final short summary of the whole PR, in 3–5 simple sentences. Explain the main change, its purpose, and any important uncertainty. Do not list every file. Return only JSON {"summary":"..."}. You cannot call any more tools. You inspected only a bounded sample of repository context, not the entire repo. Do not claim otherwise. Overview truncated: ${overviewTruncated}. Tool calls used: ${calls}/${maxTools}.\nPR evidence: ${context}\nTool results: ${JSON.stringify(evidence)}`, true)).trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, ''));
   if (typeof final.summary !== 'string' || !final.summary.trim()) throw new ModelError('Invalid PR summary.');
   return final.summary.slice(0, 3_000);

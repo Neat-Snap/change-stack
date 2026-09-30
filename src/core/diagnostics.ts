@@ -37,6 +37,7 @@ type DiagnosticEvent = {
   model?: string;
   inputChars?: number;
   maxOutputTokens?: number;
+  timeoutMs?: number;
   json?: boolean;
   reasoningEffort?: string;
   serviceTier?: string;
