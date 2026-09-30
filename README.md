@@ -2,7 +2,7 @@
 
 **English** · [Русский](README.ru.md)
 
-`cstack` is a local review tool for GitLab merge requests and GitHub pull requests. It opens a change in your browser, splits it into logical layers in reading order, and explains each one with your own OpenAI-compatible model. Code, analysis, and review state stay in memory on your machine and are discarded when the process exits.
+`cstack` is a local review tool for pull requests. It opens a change in your browser, splits it into logical layers in reading order, and explains each one with your own OpenAI-compatible model. Code, analysis, and review state stay in memory on your machine and are discarded when the process exits.
 
 ## Features
 
@@ -50,7 +50,3 @@ bun run typecheck && bun run test
 bun run build         # dist/cstack for this platform
 bun run test:tls && bun run test:ui
 ```
-
-Pushing a `v*` tag runs the [release workflow](.github/workflows/release.yml), which builds and tests the macOS Intel archive and a Linux container image, then publishes a GitHub release.
-
-The [Russian README](README.ru.md) covers setup, corporate TLS certificates, model limits, and troubleshooting in detail.
