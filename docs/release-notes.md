@@ -1,4 +1,4 @@
-Change Stack — локальный просмотр GitLab merge request и GitHub pull request.
+Change Stack – локальный просмотр GitLab merge request и GitHub pull request.
 
 В этом выпуске доступен автономный `cstack` для **macOS на Intel (x86_64)**. Bun и Node.js устанавливать не требуется. Архив содержит бинарник, русскую инструкцию и уведомления о лицензиях. `SHA256SUMS` позволяет проверить скачанный архив.
 

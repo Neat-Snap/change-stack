@@ -6,12 +6,12 @@
 
 ## Features
 
-- **Layers** — the model groups changed lines into logical steps, ordered so foundations come first. A file can span several layers.
-- **Groups and dependencies** — independent areas of work, "builds on" links, and a full-screen layer map (`G`).
-- **Part notes** — larger layers are broken into parts, with a one-line note in the code above each part (`N` to hide).
-- **Categories** — a short free-form label per layer, such as "Backend fix" or "UI change".
-- **Whole-file panel** — when a layer shows part of a file, open the full diff in a resizable side panel.
-- **Reading tools** — split/unified diffs, search (`⌘/Ctrl K`), keyboard navigation, nearby context, symbol lookup, reviewed-file progress, four GitHub/GitLab themes.
+- **Layers** – the model groups changed lines into logical steps, ordered so foundations come first. A file can span several layers.
+- **Groups and dependencies** – independent areas of work, "builds on" links, and a full-screen layer map (`G`).
+- **Part notes** – larger layers are broken into parts, with a one-line note in the code above each part (`N` to hide).
+- **Categories** – a short free-form label per layer, such as "Backend fix" or "UI change".
+- **Whole-file panel** – when a layer shows part of a file, open the full diff in a resizable side panel.
+- **Reading tools** – split/unified diffs, search (`⌘/Ctrl K`), keyboard navigation, nearby context, symbol lookup, reviewed-file progress, four GitHub/GitLab themes.
 
 ## Install
 
