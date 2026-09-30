@@ -12,7 +12,7 @@ const child = Bun.spawn([process.execPath, 'build', '--compile', '--target=bun-d
 if (await child.exited) throw new Error('macOS binary build failed.');
 const notices = Bun.spawn([process.execPath, 'run', 'notices'], { stdout: 'inherit', stderr: 'inherit' });
 if (await notices.exited) throw new Error('License notice generation failed.');
-for (const name of ['README.md', 'dist/THIRD_PARTY_NOTICES.txt']) await copyFile(name, join(directory, name.split('/').at(-1)!));
+for (const name of ['README.md', 'README.ru.md', 'dist/THIRD_PARTY_NOTICES.txt']) await copyFile(name, join(directory, name.split('/').at(-1)!));
 if (process.platform === 'darwin') {
   const probe = Bun.spawn([binary, '--version'], { stdout: 'pipe', stderr: 'inherit' });
   const actual = (await new Response(probe.stdout).text()).trim();

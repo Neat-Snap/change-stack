@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && mkdir /data && chown cstack:cstack /data && chmod 700 /data
 COPY --from=build /build/dist/cstack /usr/local/bin/cstack
 COPY --from=build /build/dist/THIRD_PARTY_NOTICES.txt /usr/share/doc/change-stack/THIRD_PARTY_NOTICES.txt
-COPY README.md /usr/share/doc/change-stack/README.md
+COPY README.md README.ru.md /usr/share/doc/change-stack/
 LABEL org.opencontainers.image.source="https://github.com/Neat-Snap/change-stack"
 ENV CHANGE_STACK_CONFIG=/data/config.json
 USER cstack
