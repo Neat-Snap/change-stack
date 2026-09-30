@@ -47,6 +47,17 @@ try {
   await expect(page.getByTestId('tree-panel')).toBeVisible();
   await expect(page.getByText('Files', { exact: true })).toBeVisible();
   await expect(page.locator('[data-slot="sidebar-content"] [data-slot="separator"]')).toHaveCount(0);
+  for (const label of ['Layers', 'Files']) {
+    const heading = page.getByText(label, { exact: true });
+    await expect(heading).toHaveCSS('text-transform', 'none');
+    await expect(heading).toHaveCSS('font-size', '13px');
+  }
+  const toolbarIcons = await page.locator('[data-review-toolbar] svg').evaluateAll(elements =>
+    elements.map(e => e.getBoundingClientRect()).filter(r => r.width > 0).map(r => [r.width, r.height]));
+  expect(toolbarIcons.length).toBe(6);
+  for (const dimensions of toolbarIcons) expect(dimensions).toEqual([16, 16]);
+  const headingBottom = await page.getByRole('button', { name: 'Layers', exact: true }).evaluate(e => e.getBoundingClientRect().bottom);
+  expect(await page.getByTestId('layers-panel').evaluate(e => e.getBoundingClientRect().top)).toBe(headingBottom);
   await page.screenshot({ path: 'dist/demo-overview.png', fullPage: true });
   const fontBefore = await page.getByTestId('layer-button').nth(1).evaluate(e => getComputedStyle(e).fontWeight);
   await page.getByTestId('layer-button').nth(1).click();
@@ -130,6 +141,34 @@ try {
   await expect.poll(() => page.getByRole('region', { name: 'tests/invitations.test.ts' }).evaluate(e => e.getBoundingClientRect().top)).toBeLessThan(680);
   await expect(page.getByRole('region', { name: 'tests/invitations.test.ts' }).locator('diffs-container').getByText('expired invitations cannot add members', { exact: false })).toBeVisible();
   await expect(page.getByTestId('file-diff')).toHaveCount(5);
+  // A long layer list must clip directly below its fixed section heading.
+  await page.unroute('**/api/review');
+  await page.route('**/api/review', async route => {
+    const response = await route.fetch();
+    const session = await response.json();
+    session.analysis.layers = Array.from({ length: 30 }, (_, i) => ({
+      id: `long-${i}`, title: `Layer ${i + 1} with a longer explanation`, summary: 'Review this change.',
+      files: [`src/change-${i}.ts`], questions: [],
+    }));
+    session.review.files = session.analysis.layers.map((layer: { files: string[] }) => ({
+      path: layer.files[0], oldPath: layer.files[0], status: 'modified', additions: 0, deletions: 0, patch: '', incomplete: false,
+    }));
+    await route.fulfill({ response, json: session });
+  });
+  await page.evaluate(hash => { location.hash = hash; }, new URL(url).hash);
+  await expect(page.getByTestId('layer-button')).toHaveCount(30);
+  const layersHeading = page.getByRole('button', { name: 'Layers', exact: true });
+  const fixedBottom = await layersHeading.evaluate(e => e.getBoundingClientRect().bottom);
+  const layersViewport = page.getByTestId('layers-scroll').locator('[data-slot="scroll-area-viewport"]');
+  await layersViewport.evaluate(e => { e.scrollTop = e.scrollHeight; });
+  await expect.poll(() => layersViewport.evaluate(e => e.scrollTop)).toBeGreaterThan(0);
+  expect(await layersHeading.evaluate(e => e.getBoundingClientRect().bottom)).toBe(fixedBottom);
+  expect(await layersViewport.evaluate(e => e.getBoundingClientRect().top)).toBe(fixedBottom);
+  expect(await layersHeading.evaluate(e => {
+    const r = e.getBoundingClientRect();
+    return e.contains(document.elementFromPoint(r.x + 12, r.bottom - 2));
+  })).toBe(true);
+  await page.screenshot({ path: 'dist/demo-layers-scrolled.png', fullPage: true });
   if (errors.length) throw new Error(`Browser errors: ${errors.join('; ')}`);
   console.log('Compiled binary UI passed: minimal shadcn layout, layers, Pierre diffs/tree, split/unified, mobile sidebar, and no external requests.');
 } finally {

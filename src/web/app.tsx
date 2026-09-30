@@ -117,20 +117,20 @@ function ReviewWorkspace({ session }: { session: Session }) {
       <SidebarContent className="gap-0 overflow-hidden!">
         <Collapsible open={layersOpen} onOpenChange={setLayersOpen}
           className={`flex min-h-0 flex-col ${layersOpen ? treeOpen ? 'max-h-[45%] flex-[0_1_45%]' : 'flex-1' : 'shrink-0'}`}>
-          <div className="shrink-0 px-3 pb-2 pt-1">
-            <CollapsibleTrigger className="flex h-8 w-full items-center justify-between rounded-md bg-sidebar-accent/50 px-3 text-left text-foreground hover:bg-sidebar-accent" aria-label="Layers">
-              <span className="text-[11px] font-semibold uppercase tracking-wider">Layers</span>
+          <div className="relative z-10 shrink-0 bg-sidebar px-3">
+            <CollapsibleTrigger className="flex h-9 w-full items-center justify-between rounded-sm px-2 text-left text-foreground hover:bg-sidebar-accent" aria-label="Layers">
+              <span className="font-sans text-[13px] font-medium">Layers</span>
               <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${layersOpen ? 'rotate-90' : ''}`} />
             </CollapsibleTrigger>
           </div>
           <CollapsibleContent className="min-h-0 flex-1 overflow-hidden" data-testid="layers-panel">
-            <ScrollArea className="h-full" data-testid="layers-scroll">
+            <ScrollArea className="h-full rounded-none" data-testid="layers-scroll">
               <SidebarGroup className="px-3 pb-3 pt-0">
                 <SidebarGroupContent><SidebarMenu className="gap-1" aria-label="Review layers">
                   {analysis.layers.map((layer, index) => <SidebarMenuItem key={layer.id}>
                     <SidebarMenuButton isActive={activeLayer === layer.id} onClick={() => chooseLayer(layer.id)}
                       className="h-auto min-h-10 items-start gap-3 py-2.5" data-testid="layer-button">
-                      <span className="mt-0.5 w-3 shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">{index + 1}</span>
+                      <span className="mt-0.5 w-3 shrink-0 text-[11px] tabular-nums text-muted-foreground">{index + 1}</span>
                       <span className="whitespace-normal! overflow-visible! text-[13px] leading-5">{layer.title}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>)}
@@ -140,9 +140,9 @@ function ReviewWorkspace({ session }: { session: Session }) {
           </CollapsibleContent>
         </Collapsible>
         <Collapsible open={treeOpen} onOpenChange={setTreeOpen} className={`flex min-h-0 flex-col ${treeOpen ? 'flex-1' : 'shrink-0'}`}>
-          <div className="shrink-0 px-3 pb-2 pt-3">
-            <CollapsibleTrigger className="flex h-8 w-full items-center justify-between rounded-md bg-sidebar-accent/50 px-3 text-left text-foreground hover:bg-sidebar-accent" aria-label={treeOpen ? 'Collapse file tree' : 'Expand file tree'}>
-              <span className="text-[11px] font-semibold uppercase tracking-wider">Files</span>
+          <div className="relative z-10 shrink-0 bg-sidebar px-3 pt-2">
+            <CollapsibleTrigger className="flex h-9 w-full items-center justify-between rounded-sm px-2 text-left text-foreground hover:bg-sidebar-accent" aria-label={treeOpen ? 'Collapse file tree' : 'Expand file tree'}>
+              <span className="font-sans text-[13px] font-medium">Files</span>
               <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${treeOpen ? 'rotate-90' : ''}`} />
             </CollapsibleTrigger>
           </div>
@@ -154,14 +154,14 @@ function ReviewWorkspace({ session }: { session: Session }) {
       <SidebarRail />
     </Sidebar>
     <SidebarInset className="h-svh min-w-0 overflow-hidden">
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3 sm:px-5">
+      <header data-review-toolbar className="flex h-12 shrink-0 items-center gap-3 border-b px-3 sm:px-5">
         <SidebarTrigger className="-ml-1 size-7 text-muted-foreground" />
         <Separator orientation="vertical" className="!h-4" />
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{layer?.title ?? 'All changes'}</span>
         <div className="flex shrink-0 items-center gap-0.5" aria-label="Layer navigation">
-          <Button variant="ghost" size="icon" className="size-6 text-muted-foreground" aria-label="Previous layer"
+          <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Previous layer"
             disabled={activeLayerIndex <= 0} onClick={() => chooseLayer(analysis.layers[activeLayerIndex - 1]!.id)}><ChevronLeft className="size-3.5" /></Button>
-          <Button variant="ghost" size="icon" className="size-6 text-muted-foreground" aria-label="Next layer"
+          <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Next layer"
             disabled={!analysis.layers.length || activeLayerIndex >= analysis.layers.length - 1}
             onClick={() => chooseLayer(analysis.layers[activeLayerIndex + 1]!.id)}><ChevronRight className="size-3.5" /></Button>
         </div>
@@ -170,8 +170,8 @@ function ReviewWorkspace({ session }: { session: Session }) {
           <SelectContent>{Object.entries(themes).map(([id, label]) => <SelectItem key={id} value={id}>{label}</SelectItem>)}</SelectContent>
         </Select>
         <Tabs value={layout} onValueChange={value => setLayout(value as 'split' | 'unified')}>
-          <TabsList className="h-7 gap-0.5 bg-transparent p-0"><TabsTrigger value="split" aria-label="Split" title="Split diff" className="size-7 rounded-sm p-0 shadow-none! data-[state=active]:bg-accent"><Columns2 className="size-3.5" /></TabsTrigger>
-            <TabsTrigger value="unified" aria-label="Unified" title="Unified diff" className="size-7 rounded-sm p-0 shadow-none! data-[state=active]:bg-accent"><Rows2 className="size-3.5" /></TabsTrigger></TabsList>
+          <TabsList className="h-7 gap-0.5 bg-transparent p-0"><TabsTrigger value="split" aria-label="Split" title="Split diff" className="h-7! w-7! flex-none rounded-sm p-0 shadow-none! data-[state=active]:bg-accent"><Columns2 className="size-3.5" /></TabsTrigger>
+            <TabsTrigger value="unified" aria-label="Unified" title="Unified diff" className="h-7! w-7! flex-none rounded-sm p-0 shadow-none! data-[state=active]:bg-accent"><Rows2 className="size-3.5" /></TabsTrigger></TabsList>
         </Tabs>
       </header>
       <div className="min-h-0 flex-1" data-testid="diff-scroll">
