@@ -93,7 +93,7 @@ export function FileSection({ file, original, ranges, parts, otherLayers, review
       </div>
       <CollapsibleContent data-testid="file-diff-content">
         {(error || loading) && <p role="status" className="border-b px-3 py-1.5 text-xs text-muted-foreground">{loading ? 'Loading nearby code…' : error}</p>}
-        {file.incomplete && <p className="border-b px-3 py-1.5 text-xs text-muted-foreground">This patch is incomplete.</p>}
+        {(file.diffNote || file.incomplete) && <p className="border-b px-3 py-1.5 text-xs text-muted-foreground">{file.diffNote || 'This patch is incomplete.'}</p>}
         {displayed.patch ? <DiffBoundary patch={displayed.patch}>
           <ReviewPatch patch={displayed.patch} path={file.path} theme={theme} layout={layout} splitRatio={splitRatio} onSplitRatioChange={onSplitRatioChange} lookup={lookup} target={target} notes={notes} />
         </DiffBoundary> : <p className="px-3 py-3 text-xs text-muted-foreground">No text patch available.</p>}

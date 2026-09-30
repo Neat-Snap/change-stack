@@ -38,6 +38,11 @@ export interface ChangedFile {
   additions: number;
   deletions: number;
   incomplete: boolean;
+  diffNote?: string;
+  oldMode?: string;
+  newMode?: string;
+  oldBlobSha?: string;
+  newBlobSha?: string;
 }
 export interface Review {
   target: ReviewTarget;

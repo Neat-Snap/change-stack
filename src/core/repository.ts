@@ -1,21 +1,24 @@
 import { serviceFetch } from './network';
+import { createHash } from 'node:crypto';
 import { gitApiBase } from './target';
 import type { HostConfig, Review } from './types';
 
-export class RepositoryReadError extends Error {}
+export class RepositoryReadError extends Error {
+  constructor(message: string, readonly kind: 'limit' | 'binary' | 'encoding' | 'integrity' = 'limit') { super(message); }
+}
 
 export interface RepositoryRequest { tool: 'list_files' | 'read_file'; path: string; page?: number }
 export type RepositoryReader = (request: RepositoryRequest) => Promise<unknown>;
 
 // One tool call makes at most one read-only HTTP request, at the review's head SHA or an explicitly pinned base SHA.
-export function repositoryReader(review: Review, host: HostConfig, options: { ref?: string; repository?: string; maxChars?: number; raw?: boolean; maxBytes?: number } = {}): RepositoryReader {
+export function repositoryReader(review: Review, host: HostConfig, options: { ref?: string; repository?: string; maxChars?: number; raw?: boolean; maxBytes?: number; strictText?: boolean; blobSha?: string; allowBinary?: boolean } = {}): RepositoryReader {
   if (host.provider !== review.target.provider || new URL(host.baseUrl).origin !== review.target.origin) throw new Error('Repository host mismatch.');
   const api = gitApiBase(host);
   const prefix = new URL(host.baseUrl).pathname.replace(/^\/|\/$/g, '');
   const project = options.repository ?? review.repository ?? (prefix && review.target.project.startsWith(`${prefix}/`)
     ? review.target.project.slice(prefix.length + 1) : review.target.project);
   const projectPath = host.provider === 'gitlab' ? `/projects/${encodeURIComponent(project)}/repository`
-    : `/repos/${project.split('/').map(encodeURIComponent).join('/')}/contents`;
+    : `/repos/${project.split('/').map(encodeURIComponent).join('/')}/${options.blobSha ? 'git/blobs' : 'contents'}`;
   return async request => {
     if (!['list_files', 'read_file'].includes(request.tool) || typeof request.path !== 'string'
       || request.path.length > 1_000 || request.path.startsWith('/') || request.path.includes('\\')
@@ -26,7 +29,8 @@ export function repositoryReader(review: Review, host: HostConfig, options: { re
     const ref = encodeURIComponent(options.ref ?? review.headSha);
     const path = encodeURIComponent(request.path);
     const raw = options.raw && request.tool === 'read_file';
-    const suffix = host.provider === 'gitlab'
+    if (options.blobSha && (!raw || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(options.blobSha))) throw new RepositoryReadError('Invalid pinned blob request.', 'integrity');
+    const suffix = options.blobSha ? host.provider === 'gitlab' ? `/blobs/${options.blobSha}/raw` : `/${options.blobSha}` : host.provider === 'gitlab'
       ? request.tool === 'list_files' ? `/tree?ref=${ref}&path=${path}&per_page=100&page=${page}` : `/files/${path}${raw ? "/raw" : ""}?ref=${ref}`
       : `${request.path ? `/${request.path.split('/').map(encodeURIComponent).join('/')}` : ''}?ref=${ref}`;
     const response = await serviceFetch(`${api}${projectPath}${suffix}`, new URL(api).origin, { headers: host.provider === 'gitlab'
@@ -41,10 +45,18 @@ export function repositoryReader(review: Review, host: HostConfig, options: { re
         chunks.push(value);
       }
     } finally { await reader.cancel(); }
-    const text = Buffer.concat(chunks).toString('utf8');
+    const buffer = Buffer.concat(chunks);
+    if (options.blobSha) {
+      const hash = createHash(options.blobSha.length === 64 ? 'sha256' : 'sha1').update(`blob ${buffer.length}\0`).update(buffer).digest('hex');
+      if (hash !== options.blobSha) throw new RepositoryReadError('Downloaded file bytes do not match the pinned Git blob. The response may be truncated or altered.', 'integrity');
+    }
+    if (raw && options.allowBinary && buffer.includes(0)) return { path: request.path, content: '', binary: true, bytes: buffer.length, truncated: false };
+    let text: string;
+    try { text = new TextDecoder('utf-8', { fatal: options.strictText, ignoreBOM: true }).decode(buffer); }
+    catch { throw new RepositoryReadError('This file is not valid UTF-8; its text diff could not be verified without losing bytes.', 'encoding'); }
     if (raw) {
-      if (text.includes('\0')) throw new RepositoryReadError('Surrounding code is unavailable for binary files.');
-      return { path: request.path, content: text, truncated: false };
+      if (text.includes('\0')) throw new RepositoryReadError('Binary content has no textual diff.', 'binary');
+      return { path: request.path, content: text, truncated: false, ...(options.allowBinary ? { bytes: buffer.length } : {}) };
     }
     const value = JSON.parse(text);
     if (request.tool === 'list_files') {

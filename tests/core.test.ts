@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { configPath, loadConfig, promptPath, saveConfig } from '../src/core/config';
 import { gitApiBase, parseTarget, tokenCreationUrl } from '../src/core/target';
 import { serviceFetch } from '../src/core/network';
@@ -13,6 +14,7 @@ import { demoSession } from '../src/core/demo';
 import { startServer } from '../src/server';
 
 const servers: ReturnType<typeof Bun.serve>[] = [];
+const blob = (text: string) => createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex');
 afterEach(() => { for (const server of servers.splice(0)) server.stop(true); });
 function mock(handler: (request: Request) => Response | Promise<Response>) {
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: handler });
@@ -54,7 +56,7 @@ describe('URL routing and authentication', () => {
 });
 
 describe('Git providers', () => {
-  test('paginates GitLab diffs, uses host credentials, and signals missing content', async () => {
+  test('paginates GitLab diffs and recovers omitted text with host credentials', async () => {
     const paths: string[] = [];
     const origin = mock(request => {
       expect(request.headers.get('PRIVATE-TOKEN')).toBe('gitlab-token');
@@ -65,27 +67,37 @@ describe('Git providers', () => {
           diff: i === 0 ? '' : '@@ -1 +1 @@\n-old\n+new\n', too_large: i === 0,
         })));
       }
-      return Response.json({ title: 'Test', author: { username: 'dev' }, diff_refs: { head_sha: 'abc' }, source_branch: 'feature', target_branch: 'main', changes_count: '101' });
+      if (url.pathname.endsWith('/repository/tree')) return Response.json(
+        (url.searchParams.get('page') === '1' ? Array.from({ length: 100 }, (_, i) => `1-${i}.ts`) : ['2-0.ts'])
+          .map(path => ({ path, type: 'blob', id: blob(url.searchParams.get('ref') === 'abc' ? 'new\n' : 'old\n'), mode: '100644' })));
+      if (url.pathname.endsWith('/raw')) return new Response(url.pathname.includes(blob('new\n')) ? 'new\n' : 'old\n');
+      return Response.json({ title: 'Test', author: { username: 'dev' }, diff_refs: { head_sha: 'abc', base_sha: 'base' }, source_branch: 'feature', target_branch: 'main', changes_count: '101' });
     });
     const review = await fetchReview(parseTarget(`${origin}/team/sub/project/-/merge_requests/1`), { provider: 'gitlab', baseUrl: origin, token: 'gitlab-token' });
-    expect(review.files).toHaveLength(101); expect(review.files[0]!.incomplete).toBe(true);
+    expect(review.files).toHaveLength(101); expect(review.files.every(file => !file.incomplete)).toBe(true);
+    expect(review.files[0]!.patch).toContain('+new'); expect(review.warnings).toEqual([]);
     expect(paths.some(p => p.includes('team%2Fsub%2Fproject'))).toBe(true);
     expect(paths.some(p => p.endsWith('page=2'))).toBe(true);
   });
-  test('normalizes GitHub renames and detects API file limits', async () => {
+  test('normalizes GitHub renames and recovers files missing from the API list', async () => {
     const origin = mock(request => {
       expect(request.headers.get('authorization')).toBe('Bearer github-token');
-      if (new URL(request.url).pathname.includes('/compare/')) return Response.json({ merge_base_commit: { sha: 'merge-base' } });
+      const url = new URL(request.url);
+      if (url.pathname.includes('/compare/')) return Response.json({ merge_base_commit: { sha: 'merge-base' } });
+      if (url.pathname.includes('/git/trees/')) return Response.json({ tree: (url.pathname.endsWith('/merge-base') ? ['old.ts'] : ['new.ts', 'missing.ts'])
+        .map(path => ({ path, type: 'blob', sha: blob(path === 'missing.ts' ? 'added\n' : path === 'old.ts' ? 'old\n' : 'new\n'), mode: '100644' })), truncated: false });
+      if (url.pathname.includes('/git/blobs/')) return new Response(url.pathname.endsWith(blob('added\n')) ? 'added\n' : url.pathname.endsWith(blob('old\n')) ? 'old\n' : 'new\n');
       return new URL(request.url).pathname.endsWith('/files') ? Response.json([{ filename: 'new.ts', previous_filename: 'old.ts', status: 'renamed', additions: 1, deletions: 1, patch: '@@ -1 +1 @@\n-old\n+new\n' }])
         : Response.json({ title: 'Rename', body: '', user: { login: 'dev' }, head: { sha: 'abc', ref: 'feature' }, base: { sha: 'base', ref: 'main' }, changed_files: 2 });
     });
     const review = await fetchReview(parseTarget(`${origin}/owner/repo/pull/2`), { provider: 'github', baseUrl: origin, token: 'github-token' });
     expect(review.baseSha).toBe('merge-base'); expect(review.baseRepository).toBe('owner/repo');
-    expect(review.files[0]!.status).toBe('renamed'); expect(review.files[0]!.patch).toContain('a/old.ts'); expect(review.warnings).toHaveLength(1);
+    expect(review.files[0]!.status).toBe('renamed'); expect(review.files[0]!.patch).toContain('a/old.ts');
+    expect(review.files[1]!.path).toBe('missing.ts'); expect(review.files[1]!.patch).toContain('+added'); expect(review.warnings).toEqual([]);
   });
   test('refuses a diff whose head changed while fetching', async () => {
     let calls = 0;
-    const origin = mock(request => new URL(request.url).pathname.endsWith('/diffs') ? Response.json([]) : Response.json({ diff_refs: { head_sha: ++calls === 1 ? 'before' : 'after' } }));
+    const origin = mock(request => /\/(diffs|tree)$/.test(new URL(request.url).pathname) ? Response.json([]) : Response.json({ diff_refs: { head_sha: ++calls === 1 ? 'before' : 'after', base_sha: 'base' } }));
     await expect(fetchReview(parseTarget(`${origin}/a/b/-/merge_requests/1`), { provider: 'gitlab', baseUrl: origin, token: 'test' })).rejects.toThrow('changed while loading');
   });
 });

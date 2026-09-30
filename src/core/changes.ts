@@ -31,7 +31,7 @@ export function changeUnits(file: ChangedFile): ChangeUnit[] {
         oldStart: rows[0].old, newStart: rows[0].current, context: [hunk.label, ...hunk.rows.slice(Math.max(0, start - 3), start).map(r => r.text), ...hunk.rows.slice(i, i + 3).map(r => r.text)].join('\n').slice(0, 1500), lines: rows.filter(r => ['+', '-'].includes(r.kind)).map(r => r.text) });
     }
   }
-  if (!units.length) units.push({ id: `${file.path}#file`, path: file.path, oldStart: 0, newStart: 0, lines: ['(No textual patch available)'], context: '', hunk: -1, rowStart: 0, rowEnd: 0, rowIndices: [] });
+  if (!units.length) units.push({ id: `${file.path}#file`, path: file.path, oldStart: 0, newStart: 0, lines: [`(${file.diffNote ?? 'No textual patch available'})`], context: `File status: ${file.status}`, hunk: -1, rowStart: 0, rowEnd: 0, rowIndices: [] });
   return units;
 }
 export function wholeRanges(files: ChangedFile[]): ChangeRange[] {

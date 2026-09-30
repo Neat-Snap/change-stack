@@ -1,6 +1,9 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+
+const blob = (text: string) => createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex');
 
 const directory = await mkdtemp(join(tmpdir(), 'change-stack-tls-'));
 const binary = resolve('dist/cstack');
@@ -17,7 +20,10 @@ try {
   await Bun.$`openssl x509 -req -in ${csr} -CA ${ca} -CAkey ${caKey} -CAcreateserial -out ${cert} -days 1 -extfile ${extension}`.quiet();
   server = Bun.serve({ hostname: '127.0.0.1', port: 0, tls: { cert: Bun.file(cert), key: Bun.file(key) }, fetch(request) {
     if (request.headers.get('private-token') !== 'test-token') return new Response(null, { status: 401 });
-    if (new URL(request.url).pathname.endsWith('/diffs')) return Response.json([{ new_path: 'a.ts', old_path: 'a.ts', diff: '@@ -1 +1 @@\n-old();\n+new();\n' }]);
+    const url = new URL(request.url);
+    if (url.pathname.endsWith('/diffs')) return Response.json([{ new_path: 'a.ts', old_path: 'a.ts', diff: '@@ -1 +1 @@\n-old();\n+new();\n' }]);
+    if (url.pathname.endsWith('/tree')) return Response.json([{ path: 'a.ts', type: 'blob', mode: '100644', id: blob(url.searchParams.get('ref') === 'base' ? 'old();\n' : 'new();\n') }]);
+    if (url.pathname.endsWith('/raw')) return new Response(url.pathname.includes(blob('old();\n')) ? 'old();\n' : 'new();\n');
     return Response.json({ title: 'TLS test', description: '', author: { username: 'test' }, source_branch: 'feature', target_branch: 'main', diff_refs: { head_sha: 'head', base_sha: 'base', start_sha: 'base' } });
   } });
   const origin = `https://localhost:${server.port}`;
@@ -41,7 +47,7 @@ try {
     const url = new URL(launch), auth = await fetch(`${url.origin}/api/session`, { method: 'POST', headers: { Origin: url.origin, Authorization: `Bearer ${url.hash.slice(9)}` } });
     const cookie = auth.headers.get('set-cookie')!.split(';')[0];
     const result = await (await fetch(`${url.origin}/api/review`, { headers: { Cookie: cookie } })).json();
-    if (result.review.files.length !== 1 || result.review.title !== 'TLS test') throw new Error('Trusted TLS review did not load.');
+    if (result.review.files.length !== 1 || result.review.title !== 'TLS test' || result.review.files[0].incomplete) throw new Error('Trusted TLS review did not load its complete diff.');
   } finally { clearTimeout(timer); child.kill(); await child.exited; }
   console.log('Compiled binary TLS passed: corporate CA works; untrusted certificates are rejected even with TLS bypass environment set.');
 } finally { server?.stop(true); await rm(directory, { recursive: true, force: true }); }

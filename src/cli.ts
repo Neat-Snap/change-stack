@@ -8,6 +8,7 @@ import { configPath, loadConfig, promptPath, saveConfig } from './core/config';
 import { parseTarget, serviceUrl, tokenCreationUrl } from './core/target';
 import { fetchReview, validateHost } from './core/providers';
 import { analyze, complete, localAnalysis, preparationMessage } from './core/analysis';
+import { ReviewRecoveryError } from './core/review-recovery';
 import { reviewTools, type ReviewTools } from './core/review-tools';
 import { repositoryReader } from './core/repository';
 import { readFile } from 'node:fs/promises';
@@ -200,8 +201,9 @@ async function main() {
     }
     const spinner = p.spinner({ indicator: 'timer' }); spinner.start('Fetching review metadata and changed files');
     let review;
-    try { review = await fetchReview(target, host); spinner.stop(`Loaded ${review.files.length} changed files`); }
+    try { review = await fetchReview(target, host, message => spinner.message(message)); spinner.stop(`Loaded ${review.files.length} changed files`); }
     catch (e) { spinner.stop('Could not load the review'); throw e; }
+    for (const warning of review.warnings) p.log.warn(warning);
     let analysis = localAnalysis(review);
     if (ai) {
       spinner.start('Preparing review layers with your configured model');
@@ -222,7 +224,7 @@ async function main() {
 }
 if (import.meta.main) main().catch(error => {
   // Do not print arbitrary library errors: they may include API response bodies or credentials.
-  p.log.error('Could not start the review. Check the URL, saved credentials, and service connectivity. Use --help for usage or --setup to replace credentials.');
+  p.log.error(error instanceof ReviewRecoveryError ? error.message : 'Could not start the review. Check the URL, saved credentials, and service connectivity. Use --help for usage or --setup to replace credentials.');
   diagnose({ stage: 'startup.failed', error: diagnosticReason(error) });
   process.exitCode = 1;
 });

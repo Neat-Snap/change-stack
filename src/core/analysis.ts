@@ -198,7 +198,7 @@ ${JSON.stringify({ title: review.title.slice(0, 500), description: review.descri
         ranges: units.map(u => ({ changeId: u.id, start: 1, end: u.lines.length })) });
     }
   }
-  if (review.files.some(f => f.incomplete)) warnings.push('Some patches are incomplete. Layers cover the available changes only.');
+  if (review.files.some(f => f.incomplete)) warnings.push('Some text diffs could not be recovered. Layers cover the available changes only; see the file warnings for details.');
   let summary = summaries.join('\n\n') || localAnalysis(review).summary;
   let ordered = layers, groups: LayerGroup[] | undefined;
   if (summaries.length && layers.length > 1) {
