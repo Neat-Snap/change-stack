@@ -112,8 +112,8 @@
   --trees-theme-list-hover-bg: var(--sidebar-accent);
 }
 .diff-container {
-  --diffs-font-size: 12px;
-  --diffs-line-height: 24px;
+  --diffs-font-size: 13px;
+  --diffs-line-height: 20px;
   --diffs-font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
@@ -158,3 +158,5 @@
 .summary-markdown table { display: block; overflow-x: auto; border-collapse: collapse; }
 .summary-markdown th, .summary-markdown td { border: 1px solid var(--border); padding: 0.25rem 0.5rem; text-align: left; }
 .summary-markdown strong { font-weight: 500; color: var(--foreground); }
+
+.diff-viewport { scrollbar-width: thin; }

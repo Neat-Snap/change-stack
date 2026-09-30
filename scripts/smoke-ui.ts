@@ -15,7 +15,7 @@ try {
     url = output.match(/http:\/\/127\.0\.0\.1:\d+\/#session=[a-f0-9-]+/)?.[0];
   }
   browser = await chromium.launch({ headless: true, executablePath: process.env.CHANGE_STACK_CHROMIUM });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, colorScheme: 'dark' });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 720 }, colorScheme: 'dark' });
   const errors: string[] = [], requests: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => requests.push(request.url()));
@@ -83,13 +83,13 @@ try {
   await expect(page.getByTestId('pr-summary')).toBeVisible();
   await tree.getByRole('treeitem', { name: /InviteForm/ }).click({ timeout: 5000 });
   await expect(page.getByTestId('file-diff')).toHaveCount(4);
-  await expect.poll(() => page.getByTestId('diff-scroll').locator('[data-radix-scroll-area-viewport]').evaluate(e => e.scrollTop)).toBeGreaterThan(0);
-  await expect.poll(() => page.getByRole('region', { name: 'src/components/InviteForm.tsx' }).evaluate(e => e.getBoundingClientRect().top)).toBeLessThan(860);
+  await expect.poll(() => page.getByTestId('diff-scroll').locator('.diff-viewport').evaluate(e => e.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(() => page.getByRole('region', { name: 'src/components/InviteForm.tsx' }).evaluate(e => e.getBoundingClientRect().top)).toBeLessThan(680);
   await expect(page.getByRole('region', { name: 'src/components/InviteForm.tsx' })).toBeVisible();
   await expect(page.locator('diffs-container').getByText('role=', { exact: false })).toBeVisible();
-  await page.getByTestId('diff-scroll').locator('[data-radix-scroll-area-viewport]').evaluate(e => { e.scrollTop = 0; });
+  await page.getByTestId('diff-scroll').locator('.diff-viewport').evaluate(e => { e.scrollTop = 0; });
   await tree.getByRole('treeitem', { name: /InviteForm/ }).click();
-  await expect.poll(() => page.getByTestId('diff-scroll').locator('[data-radix-scroll-area-viewport]').evaluate(e => e.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(() => page.getByTestId('diff-scroll').locator('.diff-viewport').evaluate(e => e.scrollTop)).toBeGreaterThan(0);
   for (const [label, id] of [['GitLab dark', 'gitlab-dark'], ['GitLab light', 'gitlab-light'], ['GitHub light', 'github-light'], ['GitHub dark', 'github-dark']]) {
     await page.getByRole('combobox', { name: 'Theme' }).click();
     await page.getByRole('option', { name: label, exact: true }).click();
@@ -105,6 +105,32 @@ try {
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'tests/invitations.test.ts' })).toBeVisible();
   await page.screenshot({ path: 'dist/demo-mobile.png', fullPage: true });
+  // A long patch must render a bounded window, while file jumps still reach its neighbors.
+  await page.setViewportSize({ width: 1440, height: 720 });
+  await page.route('**/api/review', async route => {
+    const response = await route.fetch();
+    const session = await response.json();
+    const lines = Array.from({ length: 6_000 }, (_, i) => `+export const entry_${i + 1} = ${i + 1};`).join('\n');
+    session.review.files.unshift({ path: 'src/large.ts', oldPath: 'src/large.ts', status: 'added', additions: 6_000, deletions: 0, incomplete: false,
+      patch: `diff --git a/src/large.ts b/src/large.ts\n--- /dev/null\n+++ b/src/large.ts\n@@ -0,0 +1,6000 @@\n${lines}\n` });
+    session.analysis.layers[0].files.unshift('src/large.ts');
+    await route.fulfill({ response, json: session });
+  });
+  await page.evaluate(hash => { location.hash = hash; }, new URL(url).hash);
+  await expect(page.getByTestId('file-diff')).toHaveCount(3);
+  await page.getByRole('button', { name: /All changes/ }).click();
+  await expect(page.getByTestId('file-diff')).toHaveCount(5);
+  const largeDiff = page.locator('diffs-container').first();
+  await expect(largeDiff.locator('[data-line="1"]').first()).toBeVisible();
+  expect(await largeDiff.locator('[data-line]').count()).toBeLessThan(500);
+  await page.locator('.diff-viewport').evaluate(e => { e.scrollTop = 50_000; });
+  await expect.poll(() => largeDiff.locator('[data-line]').count()).toBeGreaterThan(0);
+  expect(await largeDiff.locator('[data-line]').count()).toBeLessThan(500);
+  await page.locator('.file-tree').getByRole('treeitem', { name: /invitations.test/ }).click();
+  await expect.poll(() => page.getByRole('region', { name: 'tests/invitations.test.ts' }).evaluate(e => e.getBoundingClientRect().top)).toBeLessThan(680);
+  await expect(page.getByRole('region', { name: 'tests/invitations.test.ts' }).locator('diffs-container').getByText('expired invitations cannot add members', { exact: false })).toBeVisible();
+  await expect(page.getByTestId('file-diff')).toHaveCount(5);
+  if (errors.length) throw new Error(`Browser errors: ${errors.join('; ')}`);
   console.log('Compiled binary UI passed: minimal shadcn layout, layers, Pierre diffs/tree, split/unified, mobile sidebar, and no external requests.');
 } finally {
   await browser?.close(); child.kill();

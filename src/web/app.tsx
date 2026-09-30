@@ -1,8 +1,8 @@
 import React, { Component, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { PatchDiff } from '@pierre/diffs/react';
+import { PatchDiff, Virtualizer } from '@pierre/diffs/react';
 import { FileTree, useFileTree } from '@pierre/trees/react';
-import { ChevronLeft, ChevronRight, Files, TriangleAlert } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Columns2, Rows2, SunMoon, Files, TriangleAlert } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { themes, type ReviewTheme } from './themes';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -92,7 +92,7 @@ function ReviewWorkspace({ session }: { session: Session }) {
     if (isMobile) setOpenMobile(false);
   }
   function chooseFile(path: string) {
-    sections.current.get(path)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    sections.current.get(path)?.scrollIntoView({ behavior: 'instant', block: 'start' });
     if (isMobile) setOpenMobile(false);
   }
 
@@ -166,25 +166,25 @@ function ReviewWorkspace({ session }: { session: Session }) {
             onClick={() => chooseLayer(analysis.layers[activeLayerIndex + 1]!.id)}><ChevronRight className="size-3.5" /></Button>
         </div>
         <Select value={theme} onValueChange={value => setTheme(value as ReviewTheme)}>
-          <SelectTrigger aria-label="Theme" className="h-7! w-auto border-0 bg-transparent! px-2 text-xs shadow-none"><SelectValue /></SelectTrigger>
+          <SelectTrigger aria-label="Theme" title="Theme" className="h-7! w-7! justify-center border-0 bg-transparent! p-0 shadow-none [&>svg:last-child]:hidden"><SunMoon className="size-3.5" /><span className="sr-only"><SelectValue /></span></SelectTrigger>
           <SelectContent>{Object.entries(themes).map(([id, label]) => <SelectItem key={id} value={id}>{label}</SelectItem>)}</SelectContent>
         </Select>
         <Tabs value={layout} onValueChange={value => setLayout(value as 'split' | 'unified')}>
-          <TabsList className="h-7 rounded-md"><TabsTrigger value="split" className="px-3 text-xs">Split</TabsTrigger>
-            <TabsTrigger value="unified" className="px-3 text-xs">Unified</TabsTrigger></TabsList>
+          <TabsList className="h-7 gap-0.5 bg-transparent p-0"><TabsTrigger value="split" aria-label="Split" title="Split diff" className="size-7 rounded-sm p-0 shadow-none! data-[state=active]:bg-accent"><Columns2 className="size-3.5" /></TabsTrigger>
+            <TabsTrigger value="unified" aria-label="Unified" title="Unified diff" className="size-7 rounded-sm p-0 shadow-none! data-[state=active]:bg-accent"><Rows2 className="size-3.5" /></TabsTrigger></TabsList>
         </Tabs>
       </header>
-      <ScrollArea className="min-h-0 flex-1" data-testid="diff-scroll">
-        <div className="space-y-4 p-3 sm:space-y-5 sm:p-5">
-          <div ref={summary} className="scroll-mt-5 rounded-lg border bg-sidebar/40 p-4 sm:p-5" data-testid={layer ? 'layer-summary' : 'pr-summary'}>
+      <div className="min-h-0 flex-1" data-testid="diff-scroll">
+        <Virtualizer className="diff-viewport h-full overflow-auto" config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }} contentClassName="pb-4">
+          <div ref={summary} className="m-3 scroll-mt-3 rounded-md border bg-sidebar/40 p-3" data-testid={layer ? 'layer-summary' : 'pr-summary'}>
             <Summary text={layer?.summary ?? analysis.summary} />
           </div>
-          {warnings.map((warning, index) => <Alert key={index} className="text-muted-foreground"><TriangleAlert className="size-4" />
+          {warnings.map((warning, index) => <Alert key={index} className="mx-3 mb-3 w-auto text-muted-foreground"><TriangleAlert className="size-4" />
             <AlertDescription>{warning}</AlertDescription></Alert>)}
-          {files.map(file => <section ref={element => { if (element) sections.current.set(file.path, element); else sections.current.delete(file.path); }} key={file.path} aria-label={file.path} className="diff-container scroll-mt-5 overflow-hidden rounded-lg border bg-background" data-testid="file-diff">
+          {files.map(file => <section ref={element => { if (element) sections.current.set(file.path, element); else sections.current.delete(file.path); }} key={file.path} aria-label={file.path} className="diff-container scroll-mt-0 border-b bg-background" data-testid="file-diff">
             <Collapsible open={!collapsed.has(file.path)} onOpenChange={open => setFileCollapsed(file.path, !open)}>
-              <div className="flex min-h-11 items-center gap-3 bg-sidebar/60 px-3">
-                <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-2 py-3 text-left text-xs" aria-label={`${collapsed.has(file.path) ? 'Expand' : 'Collapse'} ${file.path}`}>
+              <div className="sticky top-0 z-10 flex min-h-10 items-center gap-3 bg-sidebar px-3">
+                <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-2 py-2.5 text-left text-xs" aria-label={`${collapsed.has(file.path) ? 'Expand' : 'Collapse'} ${file.path}`}>
                   <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${collapsed.has(file.path) ? '' : 'rotate-90'}`} />
                   <span className="truncate font-mono">{file.path}</span>
                 </CollapsibleTrigger>
@@ -205,8 +205,8 @@ function ReviewWorkspace({ session }: { session: Session }) {
             </Collapsible>
           </section>)}
           {!files.length && <p className="p-5 text-sm text-muted-foreground">No changes to display.</p>}
-        </div>
-      </ScrollArea>
+        </Virtualizer>
+      </div>
     </SidebarInset>
   </>;
 }

@@ -79,7 +79,7 @@ Builds download dependencies from npm; the shipped application does not. Distrib
 
 - Logical review layers generated in bounded batches by your model, with exact file-reference validation and local grouping as a fallback.
 - A small shadcn sidebar for switching layers and files, with an accessible mobile drawer and extension-specific file icons. Layers and the file tree collapse independently; each has its own scroll area, and long layer lists leave space for the tree. Distinct Layers and Files headers have their collapse arrows on the right; spacing separates the sections without a horizontal rule. Layer hover tooltips are removed. Previous/next controls in the main header navigate layers even when their list is collapsed.
-- Pierre's file tree and syntax-highlighted split/unified diffs. Each layer opens directly to its changes.
+- Pierre's file tree and syntax-highlighted split/unified diffs. Each layer opens directly to its changes. The diff pane is flat and compact, with sticky file headers, icon-based display controls, and immediate file jumps. Code rendering is limited to a window around the viewport to reduce DOM work on long patches. File headers remain available throughout the list.
 - Four selectable themes: GitHub dark/light and GitLab dark/light. The initial GitHub theme follows your system preference. All theme assets are local.
 - Each layer shows a short explanation in a bordered Markdown box above its diffs; All changes shows the whole PR summary. Lists, emphasis, inline code, code blocks, and tables are supported. Raw HTML and external images are not loaded.
 - Each file has a Reviewed checkbox. Checking it collapses the diff while retaining its file header. Reviewed state stays consistent across layers during the current browser session. You can expand a reviewed file without unchecking it.
@@ -116,3 +116,5 @@ bun run test:ui
 Tests use local mock services for host isolation, redirect refusal, credential permissions, provider pagination, snapshot consistency, model grounding/fallback, and local session authentication.
 
 The UI smoke check launches the compiled binary outside the project directory and checks the shadcn layout, layer navigation, both Pierre components, split/unified rendering, mobile navigation, and absence of external requests. Browser downloads are development tools, not part of the shipped binary. Use `CHANGE_STACK_CHROMIUM` to point the test at an existing compatible Chromium executable. Tailwind is compiled to a local stylesheet before development, tests, and executable builds; `bun run styles` generates it separately when needed.
+
+UI comparison notes and scope: [Diffshub comparison](docs/ui-comparison.md).
