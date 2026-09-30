@@ -7,6 +7,7 @@ if [ "$(uname -s):$(uname -m)" != 'Darwin:arm64' ]; then
 fi
 
 repository_url='https://github.com/Neat-Snap/change-stack'
+printf '[1/6] Finding the latest release...\n'
 release_url=$(curl -fsSL -o /dev/null -w '%{url_effective}' "$repository_url/releases/latest")
 case "$release_url" in
   "$repository_url"/releases/tag/v*) version=${release_url##*/} ;;
@@ -20,15 +21,24 @@ download_dir=$(mktemp -d)
 trap 'rm -rf "$download_dir"' 0
 cd "$download_dir"
 archive="cstack-${version}-macos-arm64.tar.gz"
-curl -fsSLO "$repository_url/releases/download/$version/$archive"
+printf '[2/6] Downloading %s...\n' "$version"
+if [ -t 2 ]; then
+  curl -fL --progress-bar -O "$repository_url/releases/download/$version/$archive"
+else
+  curl -fsSLO "$repository_url/releases/download/$version/$archive"
+fi
+printf '[3/6] Verifying the download...\n'
 curl -fsSLO "$repository_url/releases/download/$version/SHA256SUMS"
 shasum -a 256 -c SHA256SUMS
+printf '[4/6] Extracting the release...\n'
 tar -xzf "$archive"
 
 install_dir="$HOME/.local/bin"
+printf '[5/6] Installing cstack...\n'
 mkdir -p "$install_dir"
 install -m 755 "cstack-${version}-macos-arm64/cstack" "$install_dir/cstack"
 
+printf '[6/6] Checking shell PATH...\n'
 case ":$PATH:" in
   *":$install_dir:"*) ;;
   *)
