@@ -15,7 +15,7 @@
 
 ## Установка
 
-В релизах есть автономный бинарник для **macOS на Intel (x86_64)**; Bun и Node.js не нужны. Скачайте `cstack-vX.Y.Z-macos-x64.tar.gz` и `SHA256SUMS` из [Releases](https://github.com/Neat-Snap/change-stack/releases), затем:
+В релизах есть автономный бинарник для **macOS на Intel (x86_64)**; Bun и Node.js не нужны. Скачайте `cstack-vX.Y.Z-macos-x64.tar.gz` и `SHA256SUMS` из [последнего релиза](https://github.com/Neat-Snap/change-stack/releases/latest), затем выполните команды, заменив `vX.Y.Z` на скачанную версию:
 
 ```sh
 shasum -a 256 -c SHA256SUMS
