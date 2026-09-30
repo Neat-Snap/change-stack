@@ -63,6 +63,16 @@ try {
   for (const dimensions of toolbarIcons) expect(dimensions).toEqual([16, 16]);
   const headingBottom = await page.getByRole('button', { name: 'Layers', exact: true }).evaluate(e => e.getBoundingClientRect().bottom);
   expect(await page.getByTestId('layers-panel').evaluate(e => e.getBoundingClientRect().top)).toBe(headingBottom + 1);
+  expect(await page.getByTestId('layer-button').first().evaluate(e => e.getBoundingClientRect().top)).toBeGreaterThanOrEqual(headingBottom + 8);
+  await page.getByRole('button', { name: 'Layers', exact: true }).click();
+  await page.getByRole('button', { name: 'Collapse file tree' }).click();
+  const borderWidths = await page.getByRole('button', { name: 'Expand file tree' }).evaluate(e => {
+    const files = e.parentElement!, layers = files.parentElement!.previousElementSibling!.firstElementChild!;
+    return Number.parseFloat(getComputedStyle(files).borderTopWidth) + Number.parseFloat(getComputedStyle(layers).borderBottomWidth);
+  });
+  expect(borderWidths).toBe(1);
+  await page.getByRole('button', { name: 'Layers', exact: true }).click();
+  await page.getByRole('button', { name: 'Expand file tree' }).click();
   await page.screenshot({ path: 'dist/demo-overview.png', fullPage: true });
   const fontBefore = await page.getByTestId('layer-button').nth(1).evaluate(e => getComputedStyle(e).fontWeight);
   await page.getByTestId('layer-button').nth(1).click();
@@ -202,6 +212,12 @@ try {
     matches: [{ path: sharedPath, line: 11, startLine: 10, snippet: 'context();\nnewName();\nlog();', kind: 'definition' }] } }));
   await page.evaluate(hash => { location.hash = hash; }, new URL(url).hash);
   await expect(page.getByTestId('layer-button')).toHaveCount(2);
+  await expect(page.getByTestId('diff-scope')).toContainText('only changes assigned to this layer');
+  await expect(page.getByTestId('file-scope')).toContainText('Layer: +1 −1 · Whole file: +2 −1 · Also changed in 1 other layer');
+  await page.getByRole('button', { name: 'View all file changes' }).click();
+  await expect(page.getByTestId('pr-summary')).toBeAttached();
+  await expect(page.locator('diffs-container').getByText('log();', { exact: true })).toBeVisible();
+  await page.getByTestId('layer-button').first().click();
   await expect(page.locator('diffs-container').getByText('newName();', { exact: true })).toBeVisible();
   await expect(page.locator('diffs-container').getByText('log();', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Expand context src/shared.ts' }).click();

@@ -2,7 +2,7 @@ import React, { Component, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Virtualizer } from '@pierre/diffs/react';
 import { FileTree, useFileTree } from '@pierre/trees/react';
-import { ChevronLeft, ChevronRight, Columns2, Rows2, SunMoon, Files, TriangleAlert, Search, SearchCode } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Columns2, Rows2, Sun, Moon, Files, TriangleAlert, Search, SearchCode } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { themes, type ReviewTheme } from './themes';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -196,7 +196,7 @@ function ReviewWorkspace({ session }: { session: Session }) {
           </div>
           <CollapsibleContent className="min-h-0 flex-1 overflow-hidden" data-testid="layers-panel">
             <ScrollArea className="h-full rounded-none" data-testid="layers-scroll">
-              <SidebarGroup className="px-3 pb-3 pt-0">
+              <SidebarGroup className="px-3 pb-3 pt-2">
                 <SidebarGroupContent><SidebarMenu className="gap-1" aria-label="Review layers">
                   {analysis.layers.map((layer, index) => <SidebarMenuItem key={layer.id}>
                     <SidebarMenuButton isActive={activeLayer === layer.id} onClick={() => chooseLayer(layer.id)}
@@ -211,7 +211,7 @@ function ReviewWorkspace({ session }: { session: Session }) {
           </CollapsibleContent>
         </Collapsible>
         <Collapsible open={treeOpen} onOpenChange={setTreeOpen} className={`flex min-h-0 flex-col ${treeOpen ? 'flex-1' : 'shrink-0'}`}>
-          <div className="relative z-10 shrink-0 border-y bg-sidebar">
+          <div className={`relative z-10 shrink-0 bg-sidebar ${layersOpen ? "border-y" : "border-b"}`}>
             <CollapsibleTrigger className="flex h-9 w-full items-center justify-between px-4 text-left text-foreground hover:bg-sidebar-accent" aria-label={treeOpen ? 'Collapse file tree' : 'Expand file tree'}>
               <span className="font-sans text-[13px] font-medium">Files</span>
               <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${treeOpen ? 'rotate-90' : ''}`} />
@@ -238,7 +238,7 @@ function ReviewWorkspace({ session }: { session: Session }) {
         </div>
         <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Search changes" title="Search (⌘/Ctrl K)" onClick={() => setSearchOpen(true)}><Search className="size-4" /></Button>
         <Select value={theme} onValueChange={value => setTheme(value as ReviewTheme)}>
-          <SelectTrigger aria-label="Theme" title="Theme" className="h-7! w-7! justify-center border-0 bg-transparent! p-0 shadow-none [&>svg:last-child]:hidden"><SunMoon className="size-3.5" /><span className="sr-only"><SelectValue /></span></SelectTrigger>
+          <SelectTrigger aria-label="Theme" title="Theme" className="h-7! w-7! justify-center border-0 bg-transparent! p-0 shadow-none [&>svg:last-child]:hidden">{dark ? <Moon className="size-4" /> : <Sun className="size-4" />}<span className="sr-only"><SelectValue /></span></SelectTrigger>
           <SelectContent>{Object.entries(themes).map(([id, label]) => <SelectItem key={id} value={id}>{label}</SelectItem>)}</SelectContent>
         </Select>
         <Tabs value={layout} onValueChange={value => setLayout(value as 'split' | 'unified')}>
@@ -250,10 +250,15 @@ function ReviewWorkspace({ session }: { session: Session }) {
         <Virtualizer className="diff-viewport h-full overflow-auto" config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }} contentClassName="pb-4">
           <div ref={summary} className="m-3 scroll-mt-3 rounded-md border bg-sidebar/40 p-3" data-testid={layer ? 'layer-summary' : 'pr-summary'}>
             <Summary text={layer?.summary ?? analysis.summary} />
+            <p className="mt-3 border-t pt-2 text-xs text-muted-foreground" data-testid="diff-scope">{layer?.ranges ? 'Original Git diff · only changes assigned to this layer' : layer ? 'Original Git diff · all changes in these files' : 'Original Git diff · all PR changes'}</p>
           </div>
           {warnings.map((warning, index) => <Alert key={index} className="mx-3 mb-3 w-auto text-muted-foreground"><TriangleAlert className="size-4" />
             <AlertDescription>{warning}</AlertDescription></Alert>)}
-          {files.map(file => <section ref={element => { if (element) sections.current.set(file.path, element); else sections.current.delete(file.path); }} key={file.path} aria-label={file.path} className="diff-container scroll-mt-0 border-b bg-background" data-testid="file-diff">
+          {files.map(file => {
+            const original = review.files.find(f => f.path === file.path)!;
+            const partial = !!layer?.ranges && (file.additions !== original.additions || file.deletions !== original.deletions);
+            const otherLayers = analysis.layers.filter(l => l.id !== layer?.id && l.files.includes(file.path)).length;
+            return <section ref={element => { if (element) sections.current.set(file.path, element); else sections.current.delete(file.path); }} key={file.path} aria-label={file.path} className="diff-container scroll-mt-0 border-b bg-background" data-testid="file-diff">
             <Collapsible open={!collapsed.has(file.path)} onOpenChange={open => setFileCollapsed(file.path, !open)}>
               <div className="sticky top-0 z-10 flex min-h-10 items-center gap-3 bg-sidebar px-3">
                 <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-2 py-2.5 text-left text-xs" aria-label={`${collapsed.has(file.path) ? 'Expand' : 'Collapse'} ${file.path}`}>
@@ -268,6 +273,10 @@ function ReviewWorkspace({ session }: { session: Session }) {
                 </label>
               </div>
               <CollapsibleContent className="border-t" data-testid="file-diff-content">
+            {layer?.ranges && <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-1.5 text-xs text-muted-foreground" data-testid="file-scope">
+              <span>{partial ? `Layer: +${file.additions} −${file.deletions} · Whole file: +${original.additions} −${original.deletions}${otherLayers ? ` · Also changed in ${otherLayers} other ${otherLayers === 1 ? 'layer' : 'layers'}` : ''}` : 'All changes in this file belong to this layer'}</span>
+              {partial && <Button variant="link" className="h-auto p-0 text-xs" onClick={() => jumpAnywhere(file.path)}>View all file changes</Button>}
+            </div>}
             {file.incomplete && <div className="border-b px-4 py-3 text-xs text-muted-foreground">{file.path}: this patch is incomplete.</div>}
             {file.patch ? <DiffBoundary key={file.path} patch={file.patch}>
               <ReviewPatch key={`${activeLayer}:${file.path}`} file={review.files.find(f => f.path === file.path)!} ranges={layer?.ranges} theme={theme} layout={layout}
@@ -275,7 +284,7 @@ function ReviewWorkspace({ session }: { session: Session }) {
             </DiffBoundary> : <div className="p-4 text-sm text-muted-foreground">{file.path} · No text patch available.</div>}
               </CollapsibleContent>
             </Collapsible>
-          </section>)}
+          </section>; })}
           {!files.length && <p className="p-5 text-sm text-muted-foreground">No changes to display.</p>}
         </Virtualizer>
       </div>

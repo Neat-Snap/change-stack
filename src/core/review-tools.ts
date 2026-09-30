@@ -1,4 +1,4 @@
-import { repositoryReader } from './repository';
+import { RepositoryReadError, repositoryReader } from './repository';
 import type { HostConfig, Review } from './types';
 import type { SourcePair } from './changes';
 
@@ -8,26 +8,34 @@ export interface ReviewTools { context(path: string): Promise<SourcePair>; looku
 
 export function reviewTools(review: Review, host: HostConfig): ReviewTools {
   const head = repositoryReader(review, host, { maxChars: 250_000 });
-  const base = review.baseSha ? repositoryReader(review, host, { ref: review.baseSha, repository: review.baseRepository ?? review.target.project, maxChars: 250_000 }) : undefined;
-  // In-memory only, bounded cache shared by context and symbol requests.
+  const base = review.baseSha ? repositoryReader(review, host, { ref: review.baseSha, repository: review.baseRepository ?? review.target.project, raw: true, maxBytes: 2_000_000 }) : undefined;
+  const contextHead = repositoryReader(review, host, { raw: true, maxBytes: 2_000_000 });
+  // In-memory only: at most 24 entries and 8 million cached text characters.
   const cache = new Map<string, Promise<string>>();
-  const read = (path: string, side: 'old' | 'current') => {
-    const key = `${side}:${path}`;
+  const sizes = new Map<string, number>();
+  const evict = (key: string) => { cache.delete(key); sizes.delete(key); };
+  const read = (path: string, side: 'old' | 'current', context = false) => {
+    const key = `${context ? 'context' : 'symbol'}:${side}:${path}`;
     const found = cache.get(key); if (found) return found;
-    if (cache.size >= 24) cache.delete(cache.keys().next().value!);
-    const reader = side === 'old' ? base : head;
-    const value = (async () => {
-      if (!reader) throw new Error('Base commit unavailable.');
+    if (cache.size >= 24) evict(cache.keys().next().value!);
+    const reader = side === 'old' ? base : context ? contextHead : head;
+    let value!: Promise<string>;
+    value = (async () => {
+      if (!reader) throw new RepositoryReadError('The original commit is unavailable, so surrounding code cannot be loaded.');
       const result = await reader({ tool: 'read_file', path }) as { content: string; truncated: boolean };
-      if (result.truncated) throw new Error('File exceeds the context budget.');
+      if (result.truncated) throw new RepositoryReadError('This file is too large for symbol search.');
+      if (cache.get(key) === value) {
+        sizes.set(key, result.content.length);
+        while ([...sizes.values()].reduce((sum, size) => sum + size, 0) > 8_000_000) evict(cache.keys().next().value!);
+      }
       return result.content;
     })();
-    cache.set(key, value); value.catch(() => cache.delete(key)); return value;
+    cache.set(key, value); value.catch(() => { if (cache.get(key) === value) evict(key); }); return value;
   };
   return {
     async context(path) {
       const file = review.files.find(f => f.path === path); if (!file) throw new Error('Unknown changed file.');
-      const [old, current] = await Promise.all([file.status === 'added' ? '' : read(file.oldPath, 'old'), file.status === 'deleted' ? '' : read(file.path, 'current')]);
+      const [old, current] = await Promise.all([file.status === 'added' ? '' : read(file.oldPath, 'old', true), file.status === 'deleted' ? '' : read(file.path, 'current', true)]);
       return { old, current };
     },
     async lookup(symbol, path) {

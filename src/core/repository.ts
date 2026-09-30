@@ -2,11 +2,13 @@ import { serviceFetch } from './network';
 import { gitApiBase } from './target';
 import type { HostConfig, Review } from './types';
 
+export class RepositoryReadError extends Error {}
+
 export interface RepositoryRequest { tool: 'list_files' | 'read_file'; path: string; page?: number }
 export type RepositoryReader = (request: RepositoryRequest) => Promise<unknown>;
 
 // One tool call makes at most one read-only HTTP request, at the review's head SHA or an explicitly pinned base SHA.
-export function repositoryReader(review: Review, host: HostConfig, options: { ref?: string; repository?: string; maxChars?: number } = {}): RepositoryReader {
+export function repositoryReader(review: Review, host: HostConfig, options: { ref?: string; repository?: string; maxChars?: number; raw?: boolean; maxBytes?: number } = {}): RepositoryReader {
   if (host.provider !== review.target.provider || new URL(host.baseUrl).origin !== review.target.origin) throw new Error('Repository host mismatch.');
   const api = gitApiBase(host);
   const prefix = new URL(host.baseUrl).pathname.replace(/^\/|\/$/g, '');
@@ -23,22 +25,28 @@ export function repositoryReader(review: Review, host: HostConfig, options: { re
     if (!Number.isInteger(page) || page < 1 || page > 100) throw new Error('Invalid repository page.');
     const ref = encodeURIComponent(options.ref ?? review.headSha);
     const path = encodeURIComponent(request.path);
+    const raw = options.raw && request.tool === 'read_file';
     const suffix = host.provider === 'gitlab'
-      ? request.tool === 'list_files' ? `/tree?ref=${ref}&path=${path}&per_page=100&page=${page}` : `/files/${path}?ref=${ref}`
+      ? request.tool === 'list_files' ? `/tree?ref=${ref}&path=${path}&per_page=100&page=${page}` : `/files/${path}${raw ? "/raw" : ""}?ref=${ref}`
       : `${request.path ? `/${request.path.split('/').map(encodeURIComponent).join('/')}` : ''}?ref=${ref}`;
     const response = await serviceFetch(`${api}${projectPath}${suffix}`, new URL(api).origin, { headers: host.provider === 'gitlab'
-      ? { 'PRIVATE-TOKEN': host.token } : { Authorization: `Bearer ${host.token}`, Accept: 'application/vnd.github+json' } });
+      ? { 'PRIVATE-TOKEN': host.token } : { Authorization: `Bearer ${host.token}`, Accept: raw ? 'application/vnd.github.raw+json' : 'application/vnd.github+json' } });
     const reader = response.body!.getReader();
     const chunks: Uint8Array[] = []; let bytes = 0;
     try {
       while (true) {
         const { value, done } = await reader.read(); if (done) break;
         bytes += value.length;
-        if (bytes > 512_000) throw new Error('Repository response exceeded the read budget.');
+        if (bytes > (options.maxBytes ?? 512_000)) throw new RepositoryReadError(raw ? 'This file is too large to load surrounding code. Its diff is still available.' : 'Repository response exceeded the read budget.');
         chunks.push(value);
       }
     } finally { await reader.cancel(); }
-    const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const text = Buffer.concat(chunks).toString('utf8');
+    if (raw) {
+      if (text.includes('\0')) throw new RepositoryReadError('Surrounding code is unavailable for binary files.');
+      return { path: request.path, content: text, truncated: false };
+    }
+    const value = JSON.parse(text);
     if (request.tool === 'list_files') {
       if (!Array.isArray(value)) throw new Error('Expected a repository directory.');
       return { entries: value.slice(0, 100).map(entry => ({ path: entry.path, type: entry.type })),

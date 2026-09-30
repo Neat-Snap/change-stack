@@ -1,3 +1,4 @@
+import { RepositoryReadError } from './core/repository';
 import type { ReviewTools } from './core/review-tools';
 import page from './web/index.html';
 import { ask } from './core/analysis';
@@ -41,7 +42,7 @@ export function startServer(session: Session, ai?: AIConfig, port = 0, publicOri
           if (url.pathname === '/api/context') return json(await tools.context(body.path));
           if (typeof body.symbol !== 'string' || !/^[A-Za-z_$][\w$]{1,79}$/.test(body.symbol)) return json({ error: 'Choose a symbol name.' }, 400);
           return json(await tools.lookup(body.symbol, body.path));
-        } catch { return json({ error: 'Repository content is unavailable or exceeds the read budget.' }, 422); }
+        } catch (error) { return json({ error: error instanceof RepositoryReadError ? error.message : 'Could not load code at the reviewed commit. Check your repository access and try again.' }, 422); }
         finally { reads--; }
       }
       if (url.pathname === '/api/ask' && request.method === 'POST') {

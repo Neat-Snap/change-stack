@@ -17,18 +17,26 @@ export function ReviewPatch({ file, ranges, theme, layout, contextAvailable, loo
   lookup: (symbol: string, path: string) => void; target?: LineTarget;
 }) {
   const [source, setSource] = useState<SourcePair>(), [context, setContext] = useState(3);
+  const [exhausted, setExhausted] = useState(false);
   const [loading, setLoading] = useState(false), [error, setError] = useState('');
   const displayed = useMemo(() => ranges || context > 3 ? layerFile(file, ranges ?? wholeRanges([file]), context, source) : file, [file, ranges, context, source]);
   async function expand() {
     setLoading(true); setError('');
-    try { if (!source) setSource(await readApi<SourcePair>('/api/context', { path: file.path })); setContext(n => Math.min(n + 20, 203)); }
+    try {
+      const loaded = source ?? await readApi<SourcePair>('/api/context', { path: file.path });
+      const next = Math.min(context + 20, 203);
+      const expanded = layerFile(file, ranges ?? wholeRanges([file]), next, loaded);
+      setSource(loaded); setContext(next); setExhausted(expanded.patch === displayed.patch);
+    }
     catch (error) { setError((error as Error).message); }
     finally { setLoading(false); }
   }
   return <>
-    {contextAvailable && (file.status === 'modified' || file.status === 'renamed') && <div className="flex min-h-8 items-center gap-3 border-b px-3 text-xs text-muted-foreground">
-      <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={loading || context >= 203} onClick={() => void expand()} aria-label={`Expand context ${file.path}`}>{loading ? 'Loading…' : '+20 context lines'}</Button>
-      {context > 3 && <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => setContext(3)}>Reset context</Button>}
+    {contextAvailable && (file.status === 'modified' || file.status === 'renamed') && <div className="flex min-h-8 flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 text-xs text-muted-foreground">
+      <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={loading || exhausted || context >= 203} title="Adds unchanged lines before and after the edits. Stops at changes outside this layer." onClick={() => void expand()} aria-label={`Expand context ${file.path}`}>{loading ? 'Loading…' : 'Show nearby unchanged code'}</Button>
+      {context > 3 && <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => { setContext(3); setExhausted(false); }}>Reset context</Button>}
+      {exhausted && !error && <span role="status">No more unchanged lines beside these edits.</span>}
+      {context > 3 && !exhausted && !error && <span>{ranges ? 'Unchanged code only · other layer edits stay hidden' : 'Unchanged lines added around the edits'}</span>}
       {error && <span role="status">{error}</span>}
     </div>}
     <PatchDiff patch={displayed.patch} selectedLines={target?.path === file.path ? { start: target.line, end: target.line, side: target.side === 'old' ? 'deletions' : 'additions' } : undefined}
