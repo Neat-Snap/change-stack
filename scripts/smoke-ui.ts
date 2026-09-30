@@ -57,7 +57,8 @@ try {
   await expect(page.getByTestId('layer-button')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Previous layer' })).toBeDisabled();
   await page.getByRole('button', { name: 'Next layer' }).click();
-  await expect(page.getByTestId('layer-summary')).toContainText('Adds error state');
+  await expect(page.getByTestId('layer-summary')).toContainText('Adds a test asserting');
+  await expect(page.getByTestId('layer-depends')).toContainText('Invitation acceptance');
   await page.getByRole('button', { name: 'Next layer' }).click();
   await expect(page.getByRole('button', { name: 'Next layer' })).toBeDisabled();
   await page.getByRole('button', { name: 'Previous layer' }).click();
@@ -83,7 +84,7 @@ try {
   }
   const toolbarIcons = await page.locator('[data-review-toolbar] svg').evaluateAll(elements =>
     elements.map(e => e.getBoundingClientRect()).filter(r => r.width > 0).map(r => [r.width, r.height]));
-  expect(toolbarIcons.length).toBe(8);
+  expect(toolbarIcons.length).toBe(9);
   for (const dimensions of toolbarIcons) expect(dimensions).toEqual([16, 16]);
   const headingBottom = await page.getByRole('button', { name: 'Layers', exact: true }).evaluate(e => e.getBoundingClientRect().bottom);
   expect(await page.getByTestId('layers-panel').evaluate(e => e.getBoundingClientRect().top)).toBe(headingBottom + 1);
@@ -98,12 +99,21 @@ try {
   await page.getByRole('button', { name: 'Layers', exact: true }).click();
   await page.getByRole('button', { name: 'Expand file tree' }).click();
   await page.screenshot({ path: 'dist/demo-overview.png', fullPage: true });
-  const fontBefore = await page.getByTestId('layer-button').nth(1).evaluate(e => getComputedStyle(e).fontWeight);
-  await page.getByTestId('layer-button').nth(1).click();
-  expect(await page.getByTestId('layer-button').nth(1).evaluate(e => getComputedStyle(e).fontWeight)).toBe(fontBefore);
+  await expect(page.getByTestId('layer-group')).toHaveText(['Safer acceptance', 'Invite form']);
+  await expect(page.getByTestId('layer-button').first().getByTestId('layer-category')).toHaveText('Backend fix');
+  await expect(page.getByTestId('layer-parts').getByRole('button')).toHaveCount(3);
+  await expect(page.getByTestId('part-note')).toHaveCount(3);
+  await expect(page.getByTestId('part-note').first()).toContainText('Refuse expired invitations');
+  await page.keyboard.press('n');
+  await expect(page.getByTestId('part-note')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Part notes' }).click();
+  await expect(page.getByTestId('part-note')).toHaveCount(3);
+  const fontBefore = await page.getByTestId('layer-button').nth(2).evaluate(e => getComputedStyle(e).fontWeight);
+  await page.getByTestId('layer-button').nth(2).click();
+  expect(await page.getByTestId('layer-button').nth(2).evaluate(e => getComputedStyle(e).fontWeight)).toBe(fontBefore);
   await expect(page.getByTestId('layer-summary')).toContainText('Adds error state');
   await expect(page.getByTestId('file-diff')).toHaveCount(1);
-  await page.getByTestId('layer-button').nth(1).hover();
+  await page.getByTestId('layer-button').nth(2).hover();
   await expect(page.getByRole('tooltip')).toHaveCount(0);
   await expect(page.getByTestId('layer-summary').locator('ul li')).toHaveCount(2);
   await expect(page.getByTestId('layer-summary').locator('code')).toContainText('sendInvitation');
@@ -117,7 +127,7 @@ try {
   await page.getByRole('button', { name: 'Expand src/components/InviteForm.tsx', exact: true }).click();
   await expect(page.locator('[data-testid="file-diff-content"]:visible')).toHaveCount(4);
   await page.getByRole('checkbox', { name: 'Mark src/components/InviteForm.tsx as reviewed', exact: true }).uncheck();
-  await page.getByTestId('layer-button').nth(1).click();
+  await page.getByTestId('layer-button').nth(2).click();
   await expect(page.getByRole('region', { name: 'src/components/InviteForm.tsx' })).toBeVisible();
   // A fresh launch link must reinitialize an already-open review tab.
   await page.evaluate(hash => { location.hash = hash; }, new URL(url).hash);
@@ -131,6 +141,18 @@ try {
   await page.getByRole('button', { name: /All changes/ }).click();
   await expect(page.getByTestId('file-diff')).toHaveCount(4);
   await expect(page.getByTestId('pr-summary')).toBeVisible();
+  await expect(page.getByRole('link', { name: /platform\/workspace/ })).toHaveAttribute('href', 'https://gitlab.example.internal/platform/workspace/-/merge_requests/142');
+  await page.getByRole('button', { name: 'Layer map' }).click();
+  await expect(page.getByTestId('map-node')).toHaveCount(3);
+  await expect(page.getByTestId('layer-map').locator('path[marker-end]')).toHaveCount(1);
+  await expect(page.getByTestId('map-overlay')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('map-overlay')).toHaveCount(0);
+  await page.keyboard.press('g');
+  await page.getByTestId('map-node').nth(1).click();
+  await expect(page.getByTestId('map-overlay')).toHaveCount(0);
+  await expect(page.getByTestId('layer-summary')).toContainText('Adds a test asserting');
+  await page.getByRole('button', { name: /All changes/ }).click();
   await tree.getByRole('treeitem', { name: /InviteForm/ }).click({ timeout: 5000 });
   await expect(page.getByTestId('file-diff')).toHaveCount(4);
   await expect.poll(() => page.getByTestId('diff-scroll').locator('.diff-viewport').evaluate(e => e.scrollTop)).toBeGreaterThan(0);
@@ -152,7 +174,7 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'Toggle Sidebar', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
-  await page.getByTestId('layer-button').nth(2).click();
+  await page.getByTestId('layer-button').nth(1).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'tests/invitations.test.ts' })).toBeVisible();
   await page.screenshot({ path: 'dist/demo-mobile.png', fullPage: true });
@@ -193,7 +215,7 @@ try {
     const session = await response.json();
     session.analysis.layers = Array.from({ length: 30 }, (_, i) => ({
       id: `long-${i}`, title: `Layer ${i + 1} with a longer explanation`, summary: 'Review this change.',
-      files: [`src/change-${i}.ts`], questions: [],
+      files: [`src/change-${i}.ts`],
     }));
     session.review.files = session.analysis.layers.map((layer: { files: string[] }, index: number) => ({
       path: layer.files[0], oldPath: layer.files[0], status: ['modified', 'added', 'deleted', 'renamed'][index % 4], additions: 0, deletions: 0, patch: '', incomplete: false,
@@ -227,8 +249,8 @@ try {
     session.review.files = [{ path: sharedPath, oldPath: sharedPath, status: 'modified', additions: 2, deletions: 1, incomplete: false,
       patch: 'diff --git a/src/shared.ts b/src/shared.ts\n--- a/src/shared.ts\n+++ b/src/shared.ts\n@@ -10,3 +10,4 @@\n context();\n-oldName();\n+newName();\n+log();\n tail();\n' }];
     session.analysis.layers = [
-      { id: 'rename', title: 'Rename call', summary: 'Renames the function.', files: [sharedPath], questions: [], ranges: [{ changeId: sharedPath + '#0:1', start: 1, end: 2 }] },
-      { id: 'logging', title: 'Add logging', summary: 'Adds logging.', files: [sharedPath], questions: [], ranges: [{ changeId: sharedPath + '#0:1', start: 3, end: 3 }] },
+      { id: 'rename', title: 'Rename call', summary: 'Renames the function.', files: [sharedPath], ranges: [{ changeId: sharedPath + '#0:1', start: 1, end: 2 }] },
+      { id: 'logging', title: 'Add logging', summary: 'Adds logging.', files: [sharedPath], ranges: [{ changeId: sharedPath + '#0:1', start: 3, end: 3 }] },
     ];
     await route.fulfill({ response, json: session });
   });
@@ -240,17 +262,30 @@ try {
     matches: [{ path: sharedPath, line: 11, startLine: 10, snippet: 'context();\nnewName();\nlog();', kind: 'definition' }] } }));
   await page.evaluate(hash => { location.hash = hash; }, new URL(url).hash);
   await expect(page.getByTestId('layer-button')).toHaveCount(2);
-  await expect(page.getByTestId('diff-scope')).toContainText('only changes assigned to this layer');
-  await expect(page.getByTestId('file-scope')).toContainText('Layer: +1 −1 · Whole file: +2 −1 · Also changed in 1 other layer');
+  await expect(page.getByTestId('diff-scope')).toContainText('Only changes assigned to this layer');
+  await expect(page.getByTestId('file-scope')).toContainText('Part of file · 1 other layer');
+  await expect(page.getByTestId('file-scope')).toHaveAttribute('title', "This layer shows +1 −1 of the file's +2 −1");
   await expect(page.getByTestId('file-tools')).toHaveCount(1);
-  await expect(page.getByTestId('file-tools')).toContainText('Nearby code');
-  await page.getByRole('button', { name: 'View all file changes' }).click();
+  await expect(page.getByRole('button', { name: 'Expand context src/shared.ts' })).toBeVisible();
+  const diffWidth = await page.getByTestId('diff-scroll').evaluate(e => e.getBoundingClientRect().width);
+  await page.getByRole('button', { name: 'Show whole file src/shared.ts' }).click();
+  expect(await page.getByTestId('diff-scroll').evaluate(e => e.getBoundingClientRect().width)).toBe(diffWidth);
+  const panelWidth = await page.getByTestId('side-panel').evaluate(e => e.getBoundingClientRect().width);
+  await page.getByRole('separator', { name: 'Resize panel' }).focus(); await page.keyboard.press('ArrowLeft');
+  expect(await page.getByTestId('side-panel').evaluate(e => e.getBoundingClientRect().width)).toBe(panelWidth + 20);
+  await expect(page.getByTestId('side-panel').locator('diffs-container').getByText('log();', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('file-diff').locator('diffs-container').getByText('log();', { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId('layer-summary')).toContainText('Renames the function.');
+  await page.getByRole('button', { name: 'Close panel' }).click();
+  await expect(page.getByTestId('side-panel')).toHaveCount(0);
+  await page.getByRole('button', { name: /All changes/ }).click();
   await expect(page.getByTestId('pr-summary')).toBeAttached();
-  await expect(page.getByTestId('pr-statistics')).toContainText('files');
+  await expect(page.getByTestId('pr-statistics')).toContainText('1 file');
   await expect(page.locator('diffs-container').getByText('log();', { exact: true })).toBeVisible();
   await page.getByTestId('layer-button').first().click();
   await expect(page.locator('diffs-container').getByText('newName();', { exact: true })).toBeVisible();
   await expect(page.locator('diffs-container').getByText('log();', { exact: true })).toHaveCount(0);
+  await page.getByRole('region', { name: sharedPath }).locator('.group').first().hover();
   await page.getByRole('button', { name: 'Expand context src/shared.ts' }).click();
   await expect(page.locator('diffs-container').getByText('before_1();', { exact: true }).first()).toBeVisible();
   await expect(page.locator('diffs-container').getByText('log();', { exact: true })).toHaveCount(0);
@@ -270,6 +305,7 @@ try {
   await expect(page.getByTestId('pr-summary')).toBeAttached();
   await expect(page.locator('diffs-container').getByText('log();', { exact: true })).toBeVisible();
   await expect(page.locator('diffs-container').getByText('newName();', { exact: true })).toBeVisible();
+  await page.getByRole('region', { name: sharedPath }).locator('.group').first().hover();
   await page.getByRole('button', { name: 'Look up symbol src/shared.ts' }).click();
   await page.getByRole('textbox', { name: 'Symbol name' }).fill('newName');
   await page.getByRole('button', { name: 'Look up', exact: true }).click();

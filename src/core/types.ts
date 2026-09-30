@@ -48,6 +48,12 @@ export interface Review {
   warnings: string[];
 }
 export interface ChangeRange { changeId: string; start: number; end: number }
-export interface Layer { ranges?: ChangeRange[]; id: string; title: string; summary: string; files: string[]; questions: string[] }
-export interface Analysis { summary: string; layers: Layer[]; source: 'model' | 'local'; warnings: string[] }
+// A part is a logically grouped subset of a layer's rows, explained beside the code.
+export interface LayerPart { title: string; summary: string; ranges: ChangeRange[] }
+export interface Layer {
+  ranges?: ChangeRange[]; id: string; title: string; summary: string; files: string[];
+  category?: string; parts?: LayerPart[]; dependsOn?: string[];
+}
+export interface LayerGroup { id: string; title: string; layers: string[] }
+export interface Analysis { summary: string; layers: Layer[]; groups?: LayerGroup[]; source: 'model' | 'local'; warnings: string[] }
 export interface Session { review: Review; analysis: Analysis; aiEnabled: boolean; demo: boolean }

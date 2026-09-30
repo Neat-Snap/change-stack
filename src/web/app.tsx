@@ -1,8 +1,8 @@
-import React, { Component, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Virtualizer } from '@pierre/diffs/react';
 import { FileTree, useFileTree } from '@pierre/trees/react';
-import { ChevronLeft, ChevronRight, Columns2, Rows2, Sun, Moon, Files, TriangleAlert, Search, SearchCode, Keyboard } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Columns2, Rows2, Sun, Moon, Files, TriangleAlert, Search, Keyboard, ExternalLink, GitBranch, MessageSquareText, X } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { themes, type ReviewTheme } from './themes';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -16,15 +16,16 @@ import {
   SidebarProvider, SidebarRail, SidebarTrigger, useSidebar,
 } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ReviewSearch, type SearchResult } from './review-search';
 import { ReviewPatch, readApi, patchLineOffset, type LineTarget } from './review-patch';
+import { FileSection, Counts } from './file-section';
+import { ReviewIntro, NextLayer, reviewRef, type LayerStat } from './review-intro';
 import { CodePeek, type PeekState } from './code-peek';
 import type { SymbolResult } from '../core/review-tools';
-import { layerFile } from '../core/changes';
+import { layerFile, partAnchors } from '../core/changes';
+import { CategoryPill, LayerMap } from './layer-map';
 import { Shortcuts } from './shortcuts';
-import { Summary } from './summary';
 import type { ChangedFile, Session } from '../core/types';
 import './generated.css';
 
@@ -60,18 +61,14 @@ function Tree({ files, select }: { files: ChangedFile[]; select: (path: string) 
   }} />;
 }
 
-class DiffBoundary extends Component<{ children: React.ReactNode; patch: string }, { error: boolean }> {
-  state = { error: false };
-  static getDerivedStateFromError() { return { error: true }; }
-  render() {
-    if (!this.state.error) return this.props.children;
-    return <div className="p-4"><p className="mb-3 text-sm text-muted-foreground">Unable to render this patch.</p>
-      <pre className="overflow-auto font-mono text-xs leading-6">{this.props.patch}</pre></div>;
-  }
-}
-
 function ReviewWorkspace({ session }: { session: Session }) {
-  const { review, analysis } = session;
+  const { review } = session;
+  // Groups are only meaningful when they partition the layers exactly.
+  const analysis = useMemo(() => {
+    const ids = new Set(session.analysis.layers.map(l => l.id)), grouped = session.analysis.groups?.flatMap(g => g.layers);
+    return grouped && grouped.length === ids.size && new Set(grouped).size === ids.size && grouped.every(id => ids.has(id))
+      ? session.analysis : { ...session.analysis, groups: undefined };
+  }, [session]);
   const [activeLayer, setActiveLayer] = useState<string>(analysis.layers[0]?.id ?? 'all');
   const sections = useRef(new Map<string, HTMLElement>());
   const summary = useRef<HTMLDivElement>(null);
@@ -88,9 +85,13 @@ function ReviewWorkspace({ session }: { session: Session }) {
   const [peek, setPeek] = useState<PeekState>();
   const lookupPath = useRef(''), lookupSerial = useRef(0);
   const [target, setTarget] = useState<LineTarget>();
+  const [panel, setPanel] = useState<string>();
+  const [mapOpen, setMapOpen] = useState(false);
+  const [notesVisible, setNotesVisible] = useState(true);
   const pendingJump = useRef<{ path: string; line?: number; side?: 'old' | 'current' } | undefined>(undefined);
   const layer = analysis.layers.find(layer => layer.id === activeLayer);
   const files = useMemo(() => review.files.filter(file => !layer || layer.files.includes(file.path)).map(file => layer?.ranges && file.patch ? layerFile(file, layer.ranges) : file), [review.files, layer]);
+  const shownFiles = useRef(files); shownFiles.current = files;
   const warnings = [...review.warnings, ...analysis.warnings];
   const [theme, setTheme] = useState<ReviewTheme>(() => {
     try { const saved = localStorage.getItem('change-stack.theme'); if (saved && Object.hasOwn(themes, saved)) return saved as ReviewTheme; } catch { /* Storage can be unavailable. */ }
@@ -121,17 +122,24 @@ function ReviewWorkspace({ session }: { session: Session }) {
       if (!jump) return;
       const section = sections.current.get(jump.path);
       if (!section) return;
-      const pane = section.closest('.diff-viewport') as HTMLElement;
-      const file = (jump.line ? review.files : files).find(f => f.path === jump.path);
-      const top = pane.scrollTop + section.getBoundingClientRect().top - pane.getBoundingClientRect().top;
-      pane.scrollTop = top + (jump.line && file ? 40 + patchLineOffset(file.patch, jump.line, jump.side ?? 'current', layout) : 0);
-      if (jump.line) requestAnimationFrame(() => requestAnimationFrame(() => {
-        const root = section.querySelector('diffs-container')?.shadowRoot;
-        const column = jump.side === 'old' ? 'deletions' : 'additions';
-        const row = root?.querySelector(`[data-code-column="${column}"] [data-line="${jump.line}"]`) ?? root?.querySelector(`[data-line="${jump.line}"]`);
-        row?.scrollIntoView({ block: 'center' });
-      }));
       pendingJump.current = undefined;
+      const pane = section.closest('.diff-viewport') as HTMLElement;
+      const file = shownFiles.current.find(f => f.path === jump.path);
+      const margin = 36 + 64;
+      const row = () => {
+        const root = section.querySelector('diffs-container')?.shadowRoot;
+        return root?.querySelector(`[data-code-column="${jump.side === 'old' ? 'deletions' : 'additions'}"] [data-line="${jump.line}"]`) ?? root?.querySelector(`[data-line="${jump.line}"]`);
+      };
+      // Re-evaluated every frame: rows render only near the viewport, so the exact line
+      // position becomes known during the animation and the scroll ends precisely on it.
+      const target = () => {
+        const paneTop = pane.getBoundingClientRect().top, sectionTop = pane.scrollTop + section.getBoundingClientRect().top - paneTop;
+        if (!jump.line) return sectionTop;
+        const rendered = row();
+        return rendered ? pane.scrollTop + rendered.getBoundingClientRect().top - paneTop - margin
+          : sectionTop + 36 + (file ? patchLineOffset(file.patch, jump.line, jump.side ?? 'current', layout) : 0) - margin;
+      };
+      smoothScroll(pane, target);
     });
   }
   useEffect(() => { if (pendingJump.current) performJump(); }, [activeLayer, collapsed]);
@@ -143,6 +151,19 @@ function ReviewWorkspace({ session }: { session: Session }) {
     if (isMobile) setOpenMobile(false);
     performJump();
   }
+  function jumpToPart(index: number) {
+    const part = layer?.parts?.[index]; if (!part) return;
+    for (const file of files) {
+      const anchor = partAnchors(review.files.find(f => f.path === file.path)!, [part])[0];
+      if (!anchor) continue;
+      setFileCollapsed(file.path, false);
+      pendingJump.current = { path: file.path, line: anchor.lineNumber, side: anchor.side === 'deletions' ? 'old' : 'current' };
+      performJump();
+      return;
+    }
+  }
+  function toggleMap() { setMapOpen(value => !value); }
+  function openOrigin() { window.open(review.target.url, '_blank', 'noopener,noreferrer'); }
   function chooseResult(result: SearchResult) { if (result.layer) chooseLayer(result.layer); else if (result.path) jumpAnywhere(result.path, result.line, result.side); }
   async function lookupSymbol(symbol: string, path: string) {
     const serial = ++lookupSerial.current; lookupPath.current = path;
@@ -168,9 +189,13 @@ function ReviewWorkspace({ session }: { session: Session }) {
       else if (event.key === 'l' || event.key === 'h') { event.preventDefault(); moveFile(event.key === 'l' ? 1 : -1); }
       else if (event.key === 'u') { event.preventDefault(); setLayout(value => value === 'split' ? 'unified' : 'split'); }
       else if (event.key === '[') { event.preventDefault(); if (isMobile) setOpenMobile(!openMobile); else setOpen(!open); }
+      else if (event.key === 'g' && analysis.layers.length > 1) { event.preventDefault(); toggleMap(); }
+      else if (event.key === 'n') { event.preventDefault(); setNotesVisible(value => !value); }
+      else if (event.key === 'o') { event.preventDefault(); openOrigin(); }
+      else if (event.key === 'Escape' && (mapOpen || panel)) { event.preventDefault(); if (mapOpen) setMapOpen(false); else setPanel(undefined); }
     };
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
-  }, [files, activeLayerIndex, searchOpen, peek, shortcutsOpen, isMobile, open, openMobile]);
+  }, [files, activeLayerIndex, searchOpen, peek, shortcutsOpen, isMobile, open, openMobile, panel, mapOpen]);
 
   function setFileCollapsed(path: string, value: boolean) {
     setCollapsed(previous => { const next = new Set(previous); if (value) next.add(path); else next.delete(path); return next; });
@@ -180,39 +205,71 @@ function ReviewWorkspace({ session }: { session: Session }) {
     setFileCollapsed(path, value);
   }
 
+  const layerStats = useMemo<LayerStat[]>(() => analysis.layers.map(l => {
+    const shown = review.files.filter(f => l.files.includes(f.path)).map(f => l.ranges && f.patch ? layerFile(f, l.ranges) : f);
+    return { paths: shown.map(f => f.path), additions: shown.reduce((n, f) => n + f.additions, 0), deletions: shown.reduce((n, f) => n + f.deletions, 0) };
+  }), [analysis.layers, review.files]);
+  const reviewedCount = review.files.filter(f => reviewed.has(f.path)).length;
+
   return <>
     <Shortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     <ReviewSearch session={session} open={searchOpen} setOpen={setSearchOpen} choose={chooseResult} />
     <CodePeek state={peek} close={closePeek} lookup={symbol => void lookupSymbol(symbol, lookupPath.current)} canJump={path => review.files.some(f => f.path === path)} jump={(path, line) => { closePeek(); jumpAnywhere(path, line); }} />
     <Sidebar collapsible="offcanvas" className="border-r">
-      <SidebarHeader className="px-3 pb-2 pt-4">
-        <SidebarMenu><SidebarMenuItem>
-          <SidebarMenuButton isActive={activeLayer === 'all'} onClick={() => chooseLayer('all')} className="h-9">
-            <Files className="size-4" /><span>All changes</span>
-            <span className="ml-auto text-xs tabular-nums text-muted-foreground">{review.files.length}</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem></SidebarMenu>
+      <SidebarHeader className="gap-0 p-0">
+        <div className="min-w-0 px-4 pb-3 pt-3" data-testid="pr-identity">
+          <a href={review.target.url} target="_blank" rel="noopener noreferrer" className="group flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+            title={`Open in ${review.target.provider === 'gitlab' ? 'GitLab' : 'GitHub'} (O)`}>
+            <span className="truncate">{review.target.project}</span><span className="shrink-0 tabular-nums">{reviewRef(review)}</span>
+            <ExternalLink className="size-3 shrink-0" aria-hidden />
+          </a>
+          <p className="mt-1 line-clamp-3 text-[13px] font-medium leading-5" title={review.title}>{review.title}</p>
+          <p className="mt-1.5 flex min-w-0 items-center gap-1 font-mono text-[11px] text-muted-foreground" title={`${review.sourceBranch} → ${review.targetBranch}${review.author ? ` · ${review.author}` : ''}`}>
+            <GitBranch className="size-3 shrink-0" aria-hidden /><span className="truncate">{review.sourceBranch}</span><span className="shrink-0">→ {review.targetBranch}</span>
+          </p>
+        </div>
+        <button onClick={() => chooseLayer('all')} data-active={activeLayer === 'all'}
+          className="flex h-8 w-full items-center gap-2 border-t px-4 text-left text-foreground hover:bg-sidebar-accent data-[active=true]:bg-sidebar-accent">
+          <Files className="size-3.5 text-muted-foreground" /><span className="text-[13px] font-medium">All changes</span>
+          <span className="text-[11px] tabular-nums text-muted-foreground">{review.files.length}</span>
+        </button>
       </SidebarHeader>
       <SidebarContent className="gap-0 overflow-hidden!">
         <Collapsible open={layersOpen} onOpenChange={setLayersOpen}
-          className={`flex min-h-0 flex-col ${layersOpen ? treeOpen ? 'max-h-[45%] flex-[0_1_45%]' : 'flex-1' : 'shrink-0'}`}>
+          className={`flex min-h-0 flex-col ${layersOpen ? treeOpen ? 'max-h-[50%] flex-[0_1_50%]' : 'flex-1' : 'shrink-0'}`}>
           <div className="relative z-10 shrink-0 border-y bg-sidebar">
-            <CollapsibleTrigger className="flex h-9 w-full items-center justify-between px-4 text-left text-foreground hover:bg-sidebar-accent" aria-label="Layers">
+            <CollapsibleTrigger className="flex h-8 w-full items-center gap-2 px-4 text-left text-foreground hover:bg-sidebar-accent" aria-label="Layers">
               <span className="font-sans text-[13px] font-medium">Layers</span>
-              <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${layersOpen ? 'rotate-90' : ''}`} />
+              <span className="text-[11px] tabular-nums text-muted-foreground">{analysis.layers.length}</span>
+              <ChevronRight className={`ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform ${layersOpen ? 'rotate-90' : ''}`} />
             </CollapsibleTrigger>
           </div>
           <CollapsibleContent className="min-h-0 flex-1 overflow-hidden" data-testid="layers-panel">
             <ScrollArea className="h-full rounded-none" data-testid="layers-scroll">
-              <SidebarGroup className="px-3 pb-3 pt-2">
-                <SidebarGroupContent><SidebarMenu className="gap-1" aria-label="Review layers">
-                  {analysis.layers.map((layer, index) => <SidebarMenuItem key={layer.id}>
-                    <SidebarMenuButton isActive={activeLayer === layer.id} onClick={() => chooseLayer(layer.id)}
-                      className="h-auto min-h-10 items-start gap-3 py-2.5" data-testid="layer-button">
-                      <span className="mt-0.5 w-3 shrink-0 text-[11px] tabular-nums text-muted-foreground">{index + 1}</span>
-                      <span className="whitespace-normal! overflow-visible! text-[13px] leading-5">{layer.title}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>)}
+              <SidebarGroup className="px-2 pb-2 pt-2">
+                <SidebarGroupContent><SidebarMenu className="gap-px" aria-label="Review layers">
+                  {analysis.layers.map((layer, index) => {
+                    const stat = layerStats[index]!, done = stat.paths.length > 0 && stat.paths.every(path => reviewed.has(path));
+                    const group = analysis.groups?.find(g => g.layers[0] === layer.id);
+                    return <React.Fragment key={layer.id}>
+                      {group && <li className={`px-2 pb-1 text-[11px] text-muted-foreground ${index ? 'pt-3' : 'pt-0.5'}`} data-testid="layer-group">{group.title}</li>}
+                      <SidebarMenuItem>
+                        <SidebarMenuButton isActive={activeLayer === layer.id} onClick={() => chooseLayer(layer.id)}
+                          className="h-auto items-start gap-2.5 py-1.5" data-testid="layer-button">
+                          <span className="mt-0.5 flex w-4 shrink-0 justify-center text-[11px] tabular-nums text-muted-foreground">
+                            {done ? <Check className="size-3.5 text-green-600 dark:text-green-400" aria-label="Reviewed" /> : index + 1}</span>
+                          <span className="min-w-0 flex-1 overflow-visible! whitespace-normal!">
+                            <span className={`line-clamp-2 text-[13px] leading-5 ${done ? 'text-muted-foreground' : ''}`}>{layer.title}</span>
+                            <span className="mt-0.5 flex min-w-0 items-center gap-2 text-[11px] leading-4 text-muted-foreground">
+                              <CategoryPill category={layer.category} className="min-w-0" />
+                              <span className="shrink-0">{stat.paths.length} {stat.paths.length === 1 ? 'file' : 'files'}</span>
+                              <Counts additions={stat.additions} deletions={stat.deletions} className="shrink-0 opacity-80" />
+                            </span>
+                          </span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    </React.Fragment>;
+                  })}
                 </SidebarMenu></SidebarGroupContent>
               </SidebarGroup>
             </ScrollArea>
@@ -220,89 +277,133 @@ function ReviewWorkspace({ session }: { session: Session }) {
         </Collapsible>
         <Collapsible open={treeOpen} onOpenChange={setTreeOpen} className={`flex min-h-0 flex-col ${treeOpen ? 'flex-1' : 'shrink-0'}`}>
           <div className={`relative z-10 shrink-0 bg-sidebar ${layersOpen ? "border-y" : "border-b"}`}>
-            <CollapsibleTrigger className="flex h-9 w-full items-center justify-between px-4 text-left text-foreground hover:bg-sidebar-accent" aria-label={treeOpen ? 'Collapse file tree' : 'Expand file tree'}>
+            <CollapsibleTrigger className="flex h-8 w-full items-center gap-2 px-4 text-left text-foreground hover:bg-sidebar-accent" aria-label={treeOpen ? 'Collapse file tree' : 'Expand file tree'}>
               <span className="font-sans text-[13px] font-medium">Files</span>
-              <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${treeOpen ? 'rotate-90' : ''}`} />
+              <span className="text-[11px] tabular-nums text-muted-foreground">{files.length}</span>
+              <ChevronRight className={`ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform ${treeOpen ? 'rotate-90' : ''}`} />
             </CollapsibleTrigger>
           </div>
-          <CollapsibleContent className="min-h-0 flex-1 overflow-hidden px-3 pb-3 pt-1" data-testid="tree-panel">
+          <CollapsibleContent className="min-h-0 flex-1 overflow-hidden px-2 pb-2 pt-1" data-testid="tree-panel">
             <Tree key={activeLayer} files={files} select={chooseFile} />
           </CollapsibleContent>
         </Collapsible>
       </SidebarContent>
       <SidebarRail />
     </Sidebar>
-    <SidebarInset className="h-svh min-w-0 overflow-hidden">
-      <header data-review-toolbar className="flex h-12 shrink-0 items-center gap-3 border-b px-3 sm:px-5">
-        <SidebarTrigger className="-ml-1 size-7 text-muted-foreground" />
+    <SidebarInset className="relative h-svh min-w-0 overflow-hidden">
+      <header data-review-toolbar className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
+        <SidebarTrigger className="size-7 text-muted-foreground" />
         <Separator orientation="vertical" className="!h-4" />
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{layer?.title ?? 'All changes'}</span>
-        <div className="flex shrink-0 items-center gap-0.5" aria-label="Layer navigation">
-          <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Previous layer"
+        <span className="min-w-0 flex-1 truncate pl-1 text-[13px]">
+          {layer ? <><span className="mr-2 tabular-nums text-muted-foreground">{activeLayerIndex + 1}/{analysis.layers.length}</span><span className="font-medium">{layer.title}</span></> : <span className="font-medium">All changes</span>}
+        </span>
+        <span className="hidden shrink-0 items-center gap-2 pr-2 text-[11px] tabular-nums text-muted-foreground md:flex" data-testid="review-progress" title="Files marked as reviewed">
+          <span className="h-1 w-16 overflow-hidden rounded-full bg-accent"><span className="block h-full rounded-full bg-green-600 transition-[width] dark:bg-green-400" style={{ width: `${review.files.length ? 100 * reviewedCount / review.files.length : 0}%` }} /></span>
+          {reviewedCount}/{review.files.length} reviewed
+        </span>
+        <div className="flex shrink-0 items-center" aria-label="Layer navigation">
+          <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Previous layer" title="Previous layer (K)"
             disabled={activeLayerIndex <= 0} onClick={() => chooseLayer(analysis.layers[activeLayerIndex - 1]!.id)}><ChevronLeft className="size-3.5" /></Button>
-          <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Next layer"
+          <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Next layer" title="Next layer (J)"
             disabled={!analysis.layers.length || activeLayerIndex >= analysis.layers.length - 1}
             onClick={() => chooseLayer(analysis.layers[activeLayerIndex + 1]!.id)}><ChevronRight className="size-3.5" /></Button>
         </div>
+        <Separator orientation="vertical" className="!h-4" />
+        {!!layer?.parts?.length && <Button variant="ghost" size="icon" className={`size-7 ${notesVisible ? 'bg-accent text-foreground' : 'text-muted-foreground'}`} aria-pressed={notesVisible}
+          aria-label="Part notes" title="Show part notes in the code (N)" onClick={() => setNotesVisible(value => !value)}><MessageSquareText className="size-4" /></Button>}
         <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Search changes" title="Search (⌘/Ctrl K)" onClick={() => setSearchOpen(true)}><Search className="size-4" /></Button>
         <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Keyboard shortcuts" title="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)}><Keyboard className="size-4" /></Button>
         <Select value={theme} onValueChange={value => setTheme(value as ReviewTheme)}>
-          <SelectTrigger aria-label="Theme" title="Theme" className="h-7! w-7! justify-center border-0 bg-transparent! p-0 shadow-none [&>svg:last-child]:hidden">{dark ? <Moon className="size-4" /> : <Sun className="size-4" />}<span className="sr-only"><SelectValue /></span></SelectTrigger>
+          <SelectTrigger aria-label="Theme" title="Theme" className="h-7! w-7! justify-center border-0 bg-transparent! p-0 text-muted-foreground shadow-none [&>svg:last-child]:hidden">{dark ? <Moon className="size-4" /> : <Sun className="size-4" />}<span className="sr-only"><SelectValue /></span></SelectTrigger>
           <SelectContent>{Object.entries(themes).map(([id, label]) => <SelectItem key={id} value={id}>{label}</SelectItem>)}</SelectContent>
         </Select>
         <Tabs value={layout} onValueChange={value => setLayout(value as 'split' | 'unified')}>
-          <TabsList className="h-7 gap-0.5 bg-transparent p-0"><TabsTrigger value="split" aria-label="Split" title="Split diff" className="h-7! w-7! flex-none rounded-sm p-0 shadow-none! data-[state=active]:bg-accent"><Columns2 className="size-3.5" /></TabsTrigger>
-            <TabsTrigger value="unified" aria-label="Unified" title="Unified diff" className="h-7! w-7! flex-none rounded-sm p-0 shadow-none! data-[state=active]:bg-accent"><Rows2 className="size-3.5" /></TabsTrigger></TabsList>
+          <TabsList className="h-7 gap-0.5 bg-transparent p-0"><TabsTrigger value="split" aria-label="Split" title="Split diff (U)" className="h-7! w-7! flex-none rounded-sm p-0 text-muted-foreground shadow-none! data-[state=active]:bg-accent data-[state=active]:text-foreground"><Columns2 className="size-3.5" /></TabsTrigger>
+            <TabsTrigger value="unified" aria-label="Unified" title="Unified diff (U)" className="h-7! w-7! flex-none rounded-sm p-0 text-muted-foreground shadow-none! data-[state=active]:bg-accent data-[state=active]:text-foreground"><Rows2 className="size-3.5" /></TabsTrigger></TabsList>
         </Tabs>
       </header>
-      <div className="min-h-0 flex-1" data-testid="diff-scroll" style={{ '--change-stack-split-left': `${splitRatio}%` } as React.CSSProperties}>
-        <Virtualizer className="diff-viewport h-full overflow-auto" config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }} contentClassName="pb-4">
-          <div ref={summary} className="m-3 scroll-mt-3 rounded-md border bg-sidebar/40 p-3" data-testid={layer ? 'layer-summary' : 'pr-summary'}>
-            <Summary text={layer?.summary ?? analysis.summary} />
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-2 text-xs text-muted-foreground"><p data-testid="diff-scope">{layer?.ranges ? 'Original Git diff · only changes assigned to this layer' : layer ? 'Original Git diff · all changes in these files' : 'Original Git diff · all PR changes'}</p>
-              {!layer && <span data-testid="pr-statistics" className="flex flex-wrap items-center gap-3 tabular-nums">
-                <span>{review.files.length} files</span><span className="text-green-600 dark:text-green-400">+{review.files.reduce((n, f) => n + f.additions, 0)} lines</span><span className="text-red-600 dark:text-red-400">−{review.files.reduce((n, f) => n + f.deletions, 0)} lines</span><span>{analysis.layers.length} layers</span>
-              </span>}
-            </div>
-          </div>
-          {warnings.map((warning, index) => <Alert key={index} className="mx-3 mb-3 w-auto text-muted-foreground"><TriangleAlert className="size-4" />
-            <AlertDescription>{warning}</AlertDescription></Alert>)}
-          {files.map(file => {
-            const original = review.files.find(f => f.path === file.path)!;
-            const partial = !!layer?.ranges && (file.additions !== original.additions || file.deletions !== original.deletions);
-            const otherLayers = analysis.layers.filter(l => l.id !== layer?.id && l.files.includes(file.path)).length;
-            const scope = layer?.ranges ? <>
-              <span data-testid="file-scope">{partial ? `Layer: +${file.additions} −${file.deletions} · Whole file: +${original.additions} −${original.deletions}${otherLayers ? ` · Also changed in ${otherLayers} other ${otherLayers === 1 ? 'layer' : 'layers'}` : ''}` : 'All file edits in this layer'}</span>
-              {partial && <Button variant="link" className="h-auto p-0 text-xs" onClick={() => jumpAnywhere(file.path)}>View all file changes</Button>}
-            </> : undefined;
-            return <section ref={element => { if (element) sections.current.set(file.path, element); else sections.current.delete(file.path); }} key={file.path} aria-label={file.path} className="diff-container scroll-mt-0 border-b bg-background" data-testid="file-diff">
-            <Collapsible open={!collapsed.has(file.path)} onOpenChange={open => setFileCollapsed(file.path, !open)}>
-              <div className="sticky top-0 z-10 flex min-h-10 items-center gap-3 bg-sidebar px-3">
-                <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-2 py-2.5 text-left text-xs" aria-label={`${collapsed.has(file.path) ? 'Expand' : 'Collapse'} ${file.path}`}>
-                  <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${collapsed.has(file.path) ? '' : 'rotate-90'}`} />
-                  <span className="truncate font-mono">{file.path}</span>
-                </CollapsibleTrigger>
-                <Button variant="ghost" size="icon" className="size-7 shrink-0 text-muted-foreground" aria-label={`Look up symbol ${file.path}`} title="Look up symbol (or Alt-click a code token)" onClick={() => { lookupPath.current = file.path; setPeek({ symbol: '' }); }}><SearchCode className="size-4" /></Button>
-                <span className="hidden shrink-0 font-mono text-[11px] tabular-nums sm:inline"><span className="text-green-600 dark:text-green-400">+{file.additions}</span> <span className="text-red-600 dark:text-red-400">−{file.deletions}</span></span>
-                <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-                  <Checkbox checked={reviewed.has(file.path)} onCheckedChange={checked => markReviewed(file.path, checked === true)} aria-label={`Mark ${file.path} as reviewed`} />
-                  <span className="hidden sm:inline">Reviewed</span>
-                </label>
-              </div>
-              <CollapsibleContent className="border-t" data-testid="file-diff-content">
-            {file.incomplete && <div className="border-b px-4 py-3 text-xs text-muted-foreground">{file.path}: this patch is incomplete.</div>}
-            {file.patch ? <DiffBoundary key={file.path} patch={file.patch}>
-              <ReviewPatch key={`${activeLayer}:${file.path}`} file={review.files.find(f => f.path === file.path)!} ranges={layer?.ranges} theme={theme} layout={layout}
-                scope={scope} splitRatio={splitRatio} onSplitRatioChange={setSplitRatio} contextAvailable={!!review.baseSha} lookup={(symbol, path) => void lookupSymbol(symbol, path)} target={target} />
-            </DiffBoundary> : <div className="p-4 text-sm text-muted-foreground">{scope}{file.path} · No text patch available.</div>}
-              </CollapsibleContent>
-            </Collapsible>
-          </section>; })}
+      <div className="relative flex min-h-0 flex-1">
+      <div className="min-w-0 flex-1" data-testid="diff-scroll" style={{ '--change-stack-split-left': `${splitRatio}%` } as React.CSSProperties}>
+        <Virtualizer className="diff-viewport h-full overflow-auto" config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }}>
+          <ReviewIntro ref={summary} review={review} analysis={analysis} layer={layer} stats={layerStats} reviewed={reviewed} choose={chooseLayer}
+            jumpToPart={jumpToPart} openMap={toggleMap} />
+          {warnings.map((warning, index) => <p key={index} role="note" className="flex items-start gap-2 border-b px-5 py-2 text-xs text-muted-foreground">
+            <TriangleAlert className="mt-px size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />{warning}</p>)}
+          {files.map(file => <FileSection key={`${activeLayer}:${file.path}`} file={file} original={review.files.find(f => f.path === file.path)!} ranges={layer?.ranges} parts={notesVisible ? layer?.parts : undefined}
+            otherLayers={analysis.layers.filter(l => l.id !== layer?.id && l.files.includes(file.path)).length}
+            reviewed={reviewed.has(file.path)} collapsed={collapsed.has(file.path)} onCollapsedChange={value => setFileCollapsed(file.path, value)}
+            onReviewedChange={value => markReviewed(file.path, value)} onWholeFile={() => setPanel(file.path)}
+            onPeek={() => { lookupPath.current = file.path; setPeek({ symbol: '' }); }}
+            sectionRef={element => { if (element) sections.current.set(file.path, element); else sections.current.delete(file.path); }}
+            theme={theme} layout={layout} splitRatio={splitRatio} onSplitRatioChange={setSplitRatio} contextAvailable={!!review.baseSha}
+            lookup={(symbol, path) => void lookupSymbol(symbol, path)} target={target} />)}
           {!files.length && <p className="p-5 text-sm text-muted-foreground">No changes to display.</p>}
+          {layer && files.length > 0 && <NextLayer next={analysis.layers[activeLayerIndex + 1]} index={activeLayerIndex} choose={chooseLayer} overview={() => chooseLayer('all')} />}
         </Virtualizer>
       </div>
+      {panel && <SidePanel title={panel} subtitle="Whole file · every change in this pull request" close={() => setPanel(undefined)}>
+        <Virtualizer className="diff-container h-full overflow-auto" data-testid="whole-file">
+          <ReviewPatch patch={review.files.find(f => f.path === panel)!.patch} path={panel} theme={theme} layout="unified" lookup={(symbol, path) => void lookupSymbol(symbol, path)} />
+        </Virtualizer>
+      </SidePanel>}
+      </div>
+      {mapOpen && <section className="absolute inset-0 z-40 flex flex-col bg-background" aria-label="Layer map" data-testid="map-overlay">
+        <div className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
+          <span className="min-w-0 flex-1 truncate pl-1 text-[13px] font-medium">Layer map</span>
+          <span className="hidden text-[11px] text-muted-foreground sm:inline">{analysis.layers.length} layers{analysis.groups?.length ? ` · ${analysis.groups.length} groups` : ''}</span>
+          <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Close layer map" title="Close (Esc)" onClick={() => setMapOpen(false)}><X className="size-4" /></Button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto"><LayerMap analysis={analysis} stats={layerStats} reviewed={reviewed} active={activeLayer} choose={id => { setMapOpen(false); chooseLayer(id); }} /></div>
+      </section>}
     </SidebarInset>
   </>;
+}
+
+const scrolls = new WeakMap<HTMLElement, number>();
+// A short eased scroll. Long distances first skip to about one screen from the target,
+// so the animation stays quick and does not render every row in between.
+function smoothScroll(pane: HTMLElement, target: () => number, duration = 260) {
+  cancelAnimationFrame(scrolls.get(pane) ?? 0);
+  const clamp = (value: number) => Math.max(0, Math.min(value, pane.scrollHeight - pane.clientHeight));
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { pane.scrollTop = clamp(target()); return; }
+  const initial = target(), limit = pane.clientHeight;
+  if (Math.abs(initial - pane.scrollTop) > limit * 2) pane.scrollTop = initial - Math.sign(initial - pane.scrollTop) * limit;
+  const from = pane.scrollTop, started = performance.now();
+  const step = (now: number) => {
+    const t = Math.min(1, (now - started) / duration), eased = 1 - (1 - t) ** 3;
+    pane.scrollTop = clamp(from + (target() - from) * eased);
+    if (t < 1) scrolls.set(pane, requestAnimationFrame(step)); else scrolls.delete(pane);
+  };
+  scrolls.set(pane, requestAnimationFrame(step));
+}
+
+function SidePanel({ title, subtitle, close, children }: { title: string; subtitle?: string; close: () => void; children: React.ReactNode }) {
+  const [width, setWidth] = useState(() => Math.round(Math.min(720, window.innerWidth * 0.46)));
+  const clamp = (value: number) => Math.round(Math.max(320, Math.min(value, window.innerWidth - 160)));
+  const resize = (event: React.PointerEvent<HTMLDivElement>) => {
+    const right = event.currentTarget.parentElement!.getBoundingClientRect().right;
+    setWidth(clamp(right - event.clientX));
+  };
+  // The panel floats over the diff so opening it never reflows the code being read.
+  return <aside style={{ width }} className="absolute inset-y-0 right-0 z-30 flex max-w-full flex-col border-l bg-background shadow-2xl shadow-black/30 max-md:w-full!" aria-label={title} data-testid="side-panel">
+    <div role="separator" aria-orientation="vertical" aria-label="Resize panel" tabIndex={0} aria-valuenow={width} aria-valuemin={320}
+      className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize touch-none after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 hover:after:w-0.5 hover:after:bg-ring focus-visible:outline-none focus-visible:after:w-0.5 focus-visible:after:bg-ring max-md:hidden"
+      title="Drag to resize · double-click to reset"
+      onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); }}
+      onPointerMove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) resize(event); }}
+      onPointerUp={event => event.currentTarget.releasePointerCapture(event.pointerId)}
+      onDoubleClick={() => setWidth(clamp(window.innerWidth * 0.46))}
+      onKeyDown={event => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        event.preventDefault(); event.stopPropagation();
+        setWidth(value => clamp(value + (event.key === 'ArrowLeft' ? 1 : -1) * (event.shiftKey ? 80 : 20)));
+      }} />
+    <div className="flex h-9 shrink-0 items-center gap-2 border-b bg-sidebar pl-3 pr-1.5">
+      <p className="min-w-0 flex-1 truncate text-xs"><span className={`font-medium ${subtitle ? 'font-mono' : ''}`}>{title}</span>{subtitle && <span className="ml-2 font-sans text-muted-foreground">{subtitle}</span>}</p>
+      <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Close panel" title="Close (Esc)" onClick={close}><X className="size-4" /></Button>
+    </div>
+    <div className="min-h-0 flex-1">{children}</div>
+  </aside>;
 }
 
 function App() {

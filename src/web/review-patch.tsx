@@ -1,10 +1,9 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { SplitDivider } from './split-divider';
 import { PatchDiff } from '@pierre/diffs/react';
-import { Button } from './components/ui/button';
-import { layerFile, wholeRanges, type SourcePair } from '../core/changes';
-import type { ChangedFile, ChangeRange } from '../core/types';
 import type { ReviewTheme } from './themes';
+import type { PartAnchor } from '../core/changes';
+import type { LayerPart } from '../core/types';
 
 export async function readApi<T>(endpoint: string, body: unknown): Promise<T> {
   const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -13,53 +12,41 @@ export async function readApi<T>(endpoint: string, body: unknown): Promise<T> {
   return value;
 }
 export interface LineTarget { path: string; line: number; side: 'old' | 'current'; serial: number }
-export function ReviewPatch({ file, ranges, theme, layout, contextAvailable, lookup, target, scope, splitRatio, onSplitRatioChange }: {
-  file: ChangedFile; ranges?: ChangeRange[]; theme: ReviewTheme; layout: 'split' | 'unified'; contextAvailable: boolean;
-  lookup: (symbol: string, path: string) => void; target?: LineTarget; scope?: React.ReactNode;
-  splitRatio: number; onSplitRatioChange: (value: number) => void;
+// A slim, full-width band instead of Pierre's default rounded pill for hidden lines.
+const separatorCSS = `[data-diff-type=split][data-overflow=scroll]{grid-template-columns:minmax(0,var(--change-stack-split-left,50%)) minmax(0,1fr)}
+[data-separator=line-info-basic]{height:24px;background-color:color-mix(in srgb,var(--diffs-bg-separator) 45%,var(--diffs-bg))}
+[data-separator=line-info-basic] [data-separator-wrapper],[data-separator=line-info-basic] [data-separator-content]{background-color:transparent}
+[data-separator=line-info-basic] [data-separator-content]{font-size:11px;letter-spacing:.01em}`;
+
+export interface PartNotes { parts: LayerPart[]; anchors: PartAnchor[] }
+export function PartNote({ index, part }: { index: number; part: LayerPart }) {
+  return <div className="flex items-baseline gap-2 border-y bg-sidebar px-3 py-1.5 font-sans text-xs leading-5" data-testid="part-note">
+    <span className="flex size-4 shrink-0 translate-y-0.5 items-center justify-center self-start rounded-full bg-foreground text-[10px] font-semibold text-background">{index + 1}</span>
+    <span className="shrink-0 font-medium text-foreground">{part.title}</span>
+    <span className="line-clamp-2 min-w-0 text-muted-foreground" title={part.summary}>{part.summary}</span>
+  </div>;
+}
+export function ReviewPatch({ patch, path, theme, layout, lookup, target, splitRatio, onSplitRatioChange, notes }: {
+  patch: string; path: string; theme: ReviewTheme; layout: 'split' | 'unified';
+  lookup: (symbol: string, path: string) => void; target?: LineTarget;
+  splitRatio?: number; onSplitRatioChange?: (value: number) => void; notes?: PartNotes;
 }) {
-  const [source, setSource] = useState<SourcePair>(), [context, setContext] = useState(3);
-  const [exhausted, setExhausted] = useState(false);
-  const [loading, setLoading] = useState(false), [error, setError] = useState('');
-  const displayed = useMemo(() => ranges || context > 3 ? layerFile(file, ranges ?? wholeRanges([file]), context, source) : file, [file, ranges, context, source]);
-  async function expand() {
-    setLoading(true); setError('');
-    try {
-      const loaded = source ?? await readApi<SourcePair>('/api/context', { path: file.path });
-      const next = Math.min(context + 20, 203);
-      const expanded = layerFile(file, ranges ?? wholeRanges([file]), next, loaded);
-      setSource(loaded); setContext(next); setExhausted(expanded.patch === displayed.patch);
-    }
-    catch (error) { setError((error as Error).message); }
-    finally { setLoading(false); }
-  }
   const lookupRef = useRef(lookup); lookupRef.current = lookup;
   // Resizing changes inherited CSS only; keep Pierre's rendered patch stable.
-  const patch = useMemo(() => (
-    <PatchDiff patch={displayed.patch} selectedLines={target?.path === file.path ? { start: target.line, end: target.line, side: target.side === 'old' ? 'deletions' : 'additions' } : undefined}
+  const diff = useMemo(() => (
+    <PatchDiff patch={patch} lineAnnotations={notes?.anchors.map(({ part, side, lineNumber }) => ({ side, lineNumber, metadata: part }))}
+      renderAnnotation={annotation => <PartNote index={annotation.metadata} part={notes!.parts[annotation.metadata]!} />} selectedLines={target?.path === path ? { start: target.line, end: target.line, side: target.side === 'old' ? 'deletions' : 'additions' } : undefined}
       options={{ theme, themeType: theme.endsWith('dark') ? 'dark' : 'light', diffStyle: layout, preferredHighlighter: 'shiki-js',
-        enableLineSelection: true, disableFileHeader: true,
-        unsafeCSS: '[data-diff-type=split][data-overflow=scroll]{grid-template-columns:minmax(0,var(--change-stack-split-left,50%)) minmax(0,1fr)}', useTokenTransformer: true,
+        enableLineSelection: true, disableFileHeader: true, hunkSeparators: 'line-info-basic', unsafeCSS: separatorCSS, useTokenTransformer: true,
         onTokenClick: (token, event) => {
-          if (event.altKey) { event.preventDefault(); const symbol = token.tokenText.trim(); if (/^[A-Za-z_$][\w$]{1,79}$/.test(symbol)) lookupRef.current(symbol, file.path); }
+          if (event.altKey) { event.preventDefault(); const symbol = token.tokenText.trim(); if (/^[A-Za-z_$][\w$]{1,79}$/.test(symbol)) lookupRef.current(symbol, path); }
         },
       }} />
-  ), [displayed.patch, target, file.path, theme, layout]);
-  const canExpand = contextAvailable && (file.status === 'modified' || file.status === 'renamed');
-  return <>
-    {(scope || canExpand) && <div data-testid="file-tools" className="flex min-h-8 flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 text-xs text-muted-foreground">
-      {scope}
-      {canExpand && <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={loading || exhausted || context >= 203} title="Adds unchanged lines before and after the edits. Stops at changes outside this layer." onClick={() => void expand()} aria-label={`Expand context ${file.path}`}>{loading ? 'Loading…' : 'Nearby code'}</Button>}
-      {context > 3 && <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => { setContext(3); setExhausted(false); }}>Reset</Button>}
-      {exhausted && !error && <span role="status">No more nearby unchanged lines.</span>}
-
-      {error && <span role="status">{error}</span>}
-    </div>}
-    <div className="relative" data-testid="patch-pane">
-    {layout === 'split' && <SplitDivider value={splitRatio} onChange={onSplitRatioChange} path={file.path} />}
-    {patch}
-    </div>
-  </>;
+  ), [patch, target, path, theme, layout, notes]);
+  return <div className="relative" data-testid="patch-pane">
+    {layout === 'split' && splitRatio !== undefined && onSplitRatioChange && <SplitDivider value={splitRatio} onChange={onSplitRatioChange} path={path} />}
+    {diff}
+  </div>;
 }
 
 // Estimate the visible patch row before Pierre mounts that window. A second

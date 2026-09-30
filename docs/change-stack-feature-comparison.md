@@ -1,6 +1,6 @@
 # CodeRabbit Change Stack feature comparison
 
-Updated after implementing local search, keyboard navigation, range-based layers, context expansion, and bounded symbol lookup. Saved progress, freshness checks, and provider comments remain deferred.
+Updated after implementing local search, keyboard navigation, range-based layers, context expansion, bounded symbol lookup, layer categories, groups and dependencies, part notes, and side panels. Saved progress, freshness checks, and provider comments remain deferred.
 
 Checked against the official Change Stack documentation on 2026-09-30 and our current source. This inventories the documented review workspace, including its integration entry points; it does not claim to inventory the entire CodeRabbit platform. Provider and plan restrictions apply to CodeRabbit features. Recommendations below are our judgment, not claims from CodeRabbit.
 
@@ -13,21 +13,21 @@ Source: [Overview](https://docs.coderabbit.ai/change-stack), [Navigation](https:
 | Feature | Our version |
 | --- | --- |
 | Logical layers spanning files and directories | Yes: model assigns changed-row ranges across files; generation remains bounded by batches. |
-| Cohorts for independent groups of layers | Missing: one flat layer list. |
-| Reading order and explicit dependencies | Partial: ordered list, no dependency model or global ordering pass. |
-| Line ranges with attached summaries/findings | Partial: ranges drive layer diffs, including multiple layers per file; summaries attach to layers rather than individual ranges. No findings model. |
-| PR overview and layer summaries | Yes: Markdown boxes above the diffs. |
+| Cohorts for independent groups of layers | Yes: a model pass groups layers into independent areas, shown as sidebar sections and boxes in the layer map. |
+| Reading order and explicit dependencies | Yes: a global ordering pass records dependencies (only on earlier layers), shown as "Builds on" links and arrows in the layer map side panel. |
+| Line ranges with attached summaries/findings | Partial: ranges drive layer diffs; larger layers get a model breakdown into logical parts whose notes sit in the code above each part (toggle with N). No findings model. |
+| PR overview and layer summaries | Yes: document-style header above the diffs; the overview adds PR identity, statistics, and a clickable reading order; layers end with an Up next link. |
 | Layers and changed-file navigation | Yes: independently collapsible sections, extension icons, continuous diff scrolling. |
 | Previous/next navigation | Yes: layer buttons and next/previous layer/file shortcuts. |
 | Command palette and keyboard shortcuts | Partial: search palette, layer/file/layout/sidebar shortcuts; no action command catalog. |
 | Responsive navigation and focus mode | Partial: mobile sidebar and sidebar toggle; no dedicated focus mode. |
 | Search paths, diffs, source, summaries, comments | Partial: local search covers paths, patches, and layer summaries; no comment/source-content index. |
-| Viewed-file progress | Partial: Reviewed collapses a file; survives layer switches, not reloads or process restarts. No progress counter/provider sync. |
+| Viewed-file progress | Partial: Reviewed collapses and dims a file; toolbar shows reviewed/total and layers show a check when all their files are reviewed. Survives layer switches, not reloads or process restarts. No provider sync. |
 | Deep links to views, layers, files, ranges | Missing: launch URL opens a session, not a specific review location. |
 | Public share locators | Missing: local bearer session links are not a public sharing/access system. |
 | Activity timeline | Missing. |
-| Per-layer diagrams | Missing: no Mermaid rendering/generation. |
-| Range summaries and comments panel | Partial: layer summary only; right panel intentionally removed. |
+| Per-layer diagrams | Missing: noted for later by user. |
+| Range summaries and comments panel | Partial: part notes inline in the code; the right panel shows the layer map or a whole-file diff, not comments. |
 
 CodeRabbit supports diagram types suited to the change (class, sequence, flow, state, entity relationships). Its reviewed progress is snapshot-specific; GitHub Viewed state sync is provider-specific. Shared URLs can follow the latest snapshot or address a particular review run.
 
@@ -59,7 +59,7 @@ Source: [Findings](https://docs.coderabbit.ai/change-stack/findings).
 
 | Feature | Our version |
 | --- | --- |
-| Structured findings attached to code | Missing: model produces explanation and review questions, not anchored findings. Questions are currently not displayed. |
+| Structured findings attached to code | Missing: no findings model. Per-layer review questions were removed at the user's request. |
 | Type, severity, category, effort/reward labels | Missing. |
 | Severity and resolved/outdated/bot filters | Missing. |
 | Attention queue: blockers, priority, pending, advisory | Missing. |
@@ -158,7 +158,7 @@ CodeRabbit's Azure artifacts are read-only. CodeRabbit's public anonymous sharin
 3. **Implemented: context expansion and Code Peek.** Load old/current content from approved provider origins at pinned commits. Start with bounded text lookup and a clear incomplete-results state; add language-aware indexing only if needed.
 4. **Deferred by user: freshness and resumable review.** Compare head on demand; associate reviewed state with host/project/PR/head. Offer opt-in storage with retention and deletion controls rather than silently caching code.
 5. **Deferred by user: provider comments and review submission.** Read threads first, then draft/reply/submit with explicit write setup and stale-head checks. This is the most useful collaboration addition for teammates reviewing each other's code.
-6. **Small, evidence-linked review questions/findings.** Surface existing questions first. Add severity only with a validated code anchor and concise explanation. Avoid a large dashboard or a speculative merge-readiness score.
+6. **Small, evidence-linked findings.** Deferred by user. Add severity only with a validated code anchor and concise explanation. Avoid a large dashboard or a speculative merge-readiness score.
 7. **Optional diagrams and rich file diffs.** Generate diagrams only when they clarify a flow; image/Markdown comparison is worthwhile for repositories that change those assets often.
 
 Defer permanent chat, adjustable panes, Slack/Discord automation, coding-agent fixes, merge controls, and additional providers until a concrete need appears. They add surface area beyond the current minimal reader.

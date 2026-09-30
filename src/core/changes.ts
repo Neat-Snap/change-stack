@@ -108,3 +108,20 @@ export function layerFile(file: ChangedFile, ranges: ChangeRange[], contextLines
   const header = file.patch.slice(0, file.patch.indexOf('@@'));
   return { ...file, patch: `${header}${output.join('\n')}\n`, additions, deletions };
 }
+
+export interface PartAnchor { part: number; side: 'additions' | 'deletions'; lineNumber: number }
+// Place each part's note after the unchanged row just above its first edit, so it
+// reads as a heading. Without such a row, the note follows the part's last edit.
+export function partAnchors(file: ChangedFile, parts: { ranges: ChangeRange[] }[]): PartAnchor[] {
+  const parsed = hunks(file), units = new Map(changeUnits(file).map(u => [u.id, u]));
+  const at = (row: Row) => row.kind === '-' ? { side: 'deletions' as const, lineNumber: row.old } : { side: 'additions' as const, lineNumber: row.current };
+  return parts.flatMap((part, index) => {
+    const rows = part.ranges.flatMap(range => {
+      const unit = units.get(range.changeId);
+      return unit && unit.hunk >= 0 ? unit.rowIndices.slice(range.start - 1, range.end).map(row => ({ hunk: unit.hunk, row })) : [];
+    }).sort((a, b) => a.hunk - b.hunk || a.row - b.row);
+    if (!rows.length) return [];
+    const first = rows[0]!, last = rows.at(-1)!, before = parsed[first.hunk]!.rows[first.row - 1];
+    return [{ part: index, ...at(before?.kind === ' ' ? before : parsed[last.hunk]!.rows[last.row]!) }];
+  });
+}

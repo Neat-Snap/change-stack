@@ -11,8 +11,8 @@ const file: ChangedFile = { path: 'src/a.ts', oldPath: 'src/a.ts', status: 'modi
 test('one file and one edit block can contribute to separate layers with exact source coordinates', () => {
   const units = changeUnits(file);
   const result = validateRangeLayers({ summary: 'Two concerns', layers: [
-    { title: 'Rename', summary: 'Rename call', ranges: [{ changeId: units[0].id, start: 1, end: 2 }], questions: [] },
-    { title: 'Log', summary: 'Log call', ranges: [{ changeId: units[0].id, start: 3, end: 3 }], questions: [] },
+    { title: 'Rename', summary: 'Rename call', ranges: [{ changeId: units[0].id, start: 1, end: 2 }] },
+    { title: 'Log', summary: 'Log call', ranges: [{ changeId: units[0].id, start: 3, end: 3 }] },
   ] }, units, 'test');
   expect(result.layers.map(l => l.files)).toEqual([['src/a.ts'], ['src/a.ts'], ['src/a.ts']]);
   const rename = layerFile(file, result.layers[0].ranges!);
@@ -30,7 +30,7 @@ test('invented, reversed, out-of-bounds and overlapping ranges are rejected', ()
     [{ changeId: 'invented', start: 1, end: 1 }], [{ changeId: units[0].id, start: 2, end: 1 }],
     [{ changeId: units[0].id, start: 0, end: 1 }], [{ changeId: units[0].id, start: 1, end: 100 }],
     [{ changeId: units[0].id, start: 1, end: 2 }, { changeId: units[0].id, start: 2, end: 3 }],
-  ]) expect(() => validateRangeLayers({ summary: '', layers: [{ title: '', summary: '', questions: [], ranges }] }, units, 'test')).toThrow();
+  ]) expect(() => validateRangeLayers({ summary: '', layers: [{ title: '', summary: '', ranges }] }, units, 'test')).toThrow();
 });
 
 test('context expansion stops before an edit belonging to another layer', () => {
@@ -60,18 +60,23 @@ test('analysis asks the model for row assignments and accepts multiple layers in
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
     const body = await request.json() as any;
     const prompt = body.messages[1].content;
+    if (prompt.startsWith('Arrange these review layers')) {
+      const ids = JSON.parse(prompt.split('Layers: ')[1]).map((l: { id: string }) => l.id);
+      return Response.json({ choices: [{ message: { content: JSON.stringify({ order: ids, groups: [], dependencies: [{ layer: ids[1], dependsOn: [ids[0]] }] }) } }] });
+    }
     expect(prompt).toContain('A single file can appear in multiple layers');
     const changes = JSON.parse(prompt.split('Review data:\n')[1]).changes;
     const unit = changes[0];
     return Response.json({ choices: [{ message: { content: JSON.stringify({ summary: 'Rename and logging.', layers: [
-      { title: 'Rename', summary: 'Rename', questions: [], ranges: [{ changeId: unit.changeId, start: 1, end: 2 }] },
-      { title: 'Logging', summary: 'Logging', questions: [], ranges: [{ changeId: unit.changeId, start: 3, end: 3 }] },
+      { title: 'Rename', summary: 'Rename', ranges: [{ changeId: unit.changeId, start: 1, end: 2 }] },
+      { title: 'Logging', summary: 'Logging', ranges: [{ changeId: unit.changeId, start: 3, end: 3 }] },
     ] }) } }] });
   } });
   try {
     const result = await analyze({ ...demoSession().review, files: [file] }, { baseUrl: server.url.origin, model: 'test', apiKey: 'test' });
     expect(result.source).toBe('model'); expect(result.layers[0].files).toEqual(result.layers[1].files);
     expect(result.layers[0].ranges![0].end).toBe(2); expect(result.layers[1].ranges![0].start).toBe(3);
+    expect(result.layers[1].dependsOn).toEqual([result.layers[0].id]); expect(result.groups).toBeUndefined();
   } finally { server.stop(true); }
 });
 

@@ -16,9 +16,21 @@ export function demoSession(): Session {
     url: 'https://gitlab.example.internal/platform/workspace/-/merge_requests/142' }, title: 'Make teammate invitations safer to accept',
     description: 'Reject expired invitation tokens, validate requests at the API boundary, and surface errors in the invitation form.',
     author: 'alex', sourceBranch: 'fix/invitation-expiry', targetBranch: 'main', headSha: 'c5e3a1498fbb', files, warnings: [] };
-  return { review, aiEnabled: false, demo: true, analysis: { ...localAnalysis(review), layers: [
-    { id: 'demo-api', title: 'Invitation acceptance', summary: 'Adds expiry validation before creating a member and marks the invitation as accepted. The route also rejects non-string tokens.', files: files.slice(0, 2).map(f => f.path), questions: ['Could two concurrent requests accept the same invitation?', 'Does membership creation and marking acceptance happen atomically?'] },
-    { id: 'demo-ui', title: 'Feedback in the invitation form', summary: 'Adds error state and an accessible alert.\n\n- Keep the entered email after a failed request.\n- Check how `sendInvitation` fills the error state; its code is outside this patch.', files: [files[2]!.path], questions: ['Is the entered email preserved after a failed request?'] },
-    { id: 'demo-tests', title: 'Expiry regression coverage', summary: 'Adds a test asserting an expired invitation cannot create a member.', files: [files[3]!.path], questions: ['Is an invitation expiring exactly now covered?'] },
+  const [service, routes, form, tests] = files.map(f => f.path) as [string, string, string, string];
+  return { review, aiEnabled: false, demo: true, analysis: { ...localAnalysis(review),
+    groups: [{ id: 'group-0', title: 'Safer acceptance', layers: ['demo-api', 'demo-tests'] }, { id: 'group-1', title: 'Invite form', layers: ['demo-ui'] }],
+    layers: [
+    { id: 'demo-api', title: 'Invitation acceptance', category: 'Backend fix', summary: 'Adds expiry validation before creating a member and marks the invitation as accepted. The route also rejects non-string tokens.', files: [service, routes],
+      parts: [
+        { title: 'Reject malformed requests', summary: 'The route returns 400 when the token is not a string, before any lookup happens.', ranges: [{ changeId: `${routes}#0:2`, start: 1, end: 1 }] },
+        { title: 'Refuse expired invitations', summary: 'Missing or expired invitations now throw before a member is added.', ranges: [{ changeId: `${service}#0:2`, start: 1, end: 3 }] },
+        { title: 'Make the token single-use', summary: 'After adding the member, the invitation is marked as accepted so it cannot be reused.', ranges: [{ changeId: `${service}#0:6`, start: 1, end: 1 }] },
+      ] },
+    { id: 'demo-tests', title: 'Expiry regression coverage', category: 'Test coverage', summary: 'Adds a test asserting an expired invitation cannot create a member.', files: [tests], dependsOn: ['demo-api'] },
+    { id: 'demo-ui', title: 'Feedback in the invitation form', category: 'UI change', summary: 'Adds error state and an accessible alert.\n\n- Keep the entered email after a failed request.\n- Check how `sendInvitation` fills the error state; its code is outside this patch.', files: [form],
+      parts: [
+        { title: 'Track the error', summary: 'A new state value holds the last error message.', ranges: [{ changeId: `${form}#0:2`, start: 1, end: 1 }] },
+        { title: 'Show it accessibly', summary: 'The message renders with role="alert" so screen readers announce it.', ranges: [{ changeId: `${form}#0:5`, start: 1, end: 1 }] },
+      ] },
   ].map(layer => ({ ...layer, ranges: wholeRanges(files.filter(file => layer.files.includes(file.path))) })) } };
 }

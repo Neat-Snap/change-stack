@@ -107,7 +107,7 @@ describe('Grounded model output and local sessions', () => {
   });
   test('rejects invented source ranges and preserves unassigned changes', () => {
     const units = changeUnits(demoSession().review.files[0]);
-    expect(() => validateRangeLayers({ summary: 'test', layers: [{ title: 'test', summary: 'test', ranges: [{ changeId: 'invented', start: 1, end: 1 }], questions: [] }] }, units, 'test')).toThrow();
+    expect(() => validateRangeLayers({ summary: 'test', layers: [{ title: 'test', summary: 'test', ranges: [{ changeId: 'invented', start: 1, end: 1 }] }] }, units, 'test')).toThrow();
     expect(validateRangeLayers({ summary: 'test', layers: [] }, units, 'test').layers[0].files).toEqual([units[0].path]);
   });
   test('calls only the configured model and falls back when it returns bad JSON', async () => {
