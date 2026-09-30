@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-if [ "$(uname -s):$(uname -m)" != 'Darwin:x86_64' ]; then
-  printf '%s\n' 'This release supports macOS on Intel (x86_64).' >&2
+if [ "$(uname -s):$(uname -m)" != 'Darwin:arm64' ]; then
+  printf '%s\n' 'This release supports macOS on Apple Silicon (arm64).' >&2
   exit 1
 fi
 
@@ -19,7 +19,7 @@ esac
 download_dir=$(mktemp -d)
 trap 'rm -rf "$download_dir"' 0
 cd "$download_dir"
-archive="cstack-${version}-macos-x64.tar.gz"
+archive="cstack-${version}-macos-arm64.tar.gz"
 curl -fsSLO "$repository_url/releases/download/$version/$archive"
 curl -fsSLO "$repository_url/releases/download/$version/SHA256SUMS"
 shasum -a 256 -c SHA256SUMS
@@ -27,7 +27,7 @@ tar -xzf "$archive"
 
 install_dir="$HOME/.local/bin"
 mkdir -p "$install_dir"
-install -m 755 "cstack-${version}-macos-x64/cstack" "$install_dir/cstack"
+install -m 755 "cstack-${version}-macos-arm64/cstack" "$install_dir/cstack"
 
 case ":$PATH:" in
   *":$install_dir:"*) ;;

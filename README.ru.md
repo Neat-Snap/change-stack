@@ -15,7 +15,7 @@
 
 ## Установка
 
-На **macOS на Intel (x86_64)** скопируйте и выполните эту команду, чтобы установить [последний релиз](https://github.com/Neat-Snap/change-stack/releases/latest). Bun и Node.js не нужны.
+На **macOS на Apple Silicon (arm64)** скопируйте и выполните эту команду, чтобы установить [последний релиз](https://github.com/Neat-Snap/change-stack/releases/latest). Bun и Node.js не нужны.
 
 ```sh
 bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/Neat-Snap/change-stack/master/scripts/install.sh | sh' && export PATH="$HOME/.local/bin:$PATH" && cstack --version
