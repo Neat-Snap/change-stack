@@ -1,4 +1,4 @@
-import type { ChangedFile, ChangeRange } from './types';
+import type { ChangedFile, ChangeRange, LineSide, Review } from './types';
 
 interface Row { text: string; old: number; current: number; kind: string }
 interface Hunk { rows: Row[]; label: string }
@@ -124,4 +124,45 @@ export function partAnchors(file: ChangedFile, parts: { ranges: ChangeRange[] }[
     const first = rows[0]!, last = rows.at(-1)!, before = parsed[first.hunk]!.rows[first.row - 1];
     return [{ part: index, ...at(before?.kind === ' ' ? before : parsed[last.hunk]!.rows[last.row]!) }];
   });
+}
+
+// A row of the service's own diff. `old` and `current` are the line counters at
+// that row, which is what GitLab line codes and positions are built from.
+export interface DiffLine { kind: ' ' | '+' | '-'; old: number; current: number }
+export function findDiffLine(file: ChangedFile, line: number, side: LineSide): DiffLine | undefined {
+  for (const hunk of hunks(file)) for (const row of hunk.rows) {
+    if (row.kind === '\\') continue;
+    if (side === 'old' ? row.kind !== '+' && row.old === line : row.kind !== '-' && row.current === line) return { kind: row.kind as DiffLine['kind'], old: row.old, current: row.current };
+  }
+}
+
+export interface LineRange { side: LineSide; start: number; end: number; endSide?: LineSide }
+// Keep endpoint sides and order by patch rows, since old/new line numbers can differ.
+// A comment range must belong to one original hunk.
+export function findDiffRange(file: ChangedFile, range: LineRange): { range: LineRange; first: DiffLine; last: DiffLine; sameHunk: boolean } | undefined {
+  const matches = (row: Row, line: number, side: LineSide) => side === 'old'
+    ? row.kind !== '+' && row.kind !== '\\' && row.old === line
+    : row.kind !== '-' && row.kind !== '\\' && row.current === line;
+  const rows = hunks(file).flatMap((hunk, index) => hunk.rows.map(row => ({ row, hunk: index })));
+  const start = rows.findIndex(({ row }) => matches(row, range.start, range.side));
+  const end = rows.findIndex(({ row }) => matches(row, range.end, range.endSide ?? range.side));
+  if (start < 0 || end < 0) return;
+  const ordered = start <= end ? range : { side: range.endSide ?? range.side, start: range.end, end: range.start, endSide: range.side };
+  const line = (row: Row): DiffLine => ({ kind: row.kind as DiffLine['kind'], old: row.old, current: row.current });
+  return { range: ordered, first: line(rows[Math.min(start, end)]!.row), last: line(rows[Math.max(start, end)]!.row), sameHunk: rows[start]!.hunk === rows[end]!.hunk };
+}
+// Deep link into the service's diff page. Falls back to the file, then the diff tab.
+export function originDiffUrl(review: Review, file: ChangedFile, range?: LineRange): string {
+  const github = review.target.provider === 'github';
+  const base = `${review.target.url}/${github ? 'files' : 'diffs'}`;
+  if (!file.diffAnchor) return base;
+  if (range) range = findDiffRange(file, range)?.range ?? range;
+  if (github) {
+    if (!range) return `${base}#diff-${file.diffAnchor}`;
+    const side = range.side === 'old' ? 'L' : 'R';
+    const endSide = (range.endSide ?? range.side) === 'old' ? 'L' : 'R';
+    return `${base}#diff-${file.diffAnchor}${side}${range.start}${range.end !== range.start || endSide !== side ? `-${endSide}${range.end}` : ''}`;
+  }
+  const line = range && findDiffLine(file, range.start, range.side);
+  return `${base}#${file.diffAnchor}${line ? `_${line.old}_${line.current}` : ''}`;
 }

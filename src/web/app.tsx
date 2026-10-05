@@ -20,6 +20,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { ReviewSearch, type SearchResult } from './review-search';
 import { ReviewPatch, readApi, patchLineOffset, type LineTarget } from './review-patch';
 import { FileSection, Counts } from './file-section';
+import { OriginContext } from './line-actions';
 import { ReviewIntro, NextLayer, reviewRef, type LayerStat } from './review-intro';
 import { CodePeek, type PeekState } from './code-peek';
 import type { SymbolResult } from '../core/review-tools';
@@ -63,6 +64,7 @@ function Tree({ files, select }: { files: ChangedFile[]; select: (path: string) 
 
 function ReviewWorkspace({ session }: { session: Session }) {
   const { review } = session;
+  const origin = useMemo(() => ({ review, commentsEnabled: !!session.commentsEnabled }), [review, session.commentsEnabled]);
   // Groups are only meaningful when they partition the layers exactly.
   const analysis = useMemo(() => {
     const ids = new Set(session.analysis.layers.map(l => l.id)), grouped = session.analysis.groups?.flatMap(g => g.layers);
@@ -211,7 +213,7 @@ function ReviewWorkspace({ session }: { session: Session }) {
   }), [analysis.layers, review.files]);
   const reviewedCount = review.files.filter(f => reviewed.has(f.path)).length;
 
-  return <>
+  return <OriginContext.Provider value={origin}>
     <Shortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     <ReviewSearch session={session} open={searchOpen} setOpen={setSearchOpen} choose={chooseResult} />
     <CodePeek state={peek} close={closePeek} lookup={symbol => void lookupSymbol(symbol, lookupPath.current)} canJump={path => review.files.some(f => f.path === path)} jump={(path, line) => { closePeek(); jumpAnywhere(path, line); }} />
@@ -356,7 +358,7 @@ function ReviewWorkspace({ session }: { session: Session }) {
         <div className="min-h-0 flex-1 overflow-auto"><LayerMap analysis={analysis} stats={layerStats} reviewed={reviewed} active={activeLayer} choose={id => { setMapOpen(false); chooseLayer(id); }} /></div>
       </section>}
     </SidebarInset>
-  </>;
+  </OriginContext.Provider>;
 }
 
 const scrolls = new WeakMap<HTMLElement, number>();

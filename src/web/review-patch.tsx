@@ -1,6 +1,8 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LineActions, LINE_ACTIONS_DELAY_MS, type LineSelection } from './line-actions';
 import { SplitDivider } from './split-divider';
 import { PatchDiff } from '@pierre/diffs/react';
+import type { SelectedLineRange } from '@pierre/diffs';
 import type { ReviewTheme } from './themes';
 import type { PartAnchor } from '../core/changes';
 import type { LayerPart } from '../core/types';
@@ -26,26 +28,56 @@ export function PartNote({ index, part }: { index: number; part: LayerPart }) {
     <span className="line-clamp-2 min-w-0 text-muted-foreground" title={part.summary}>{part.summary}</span>
   </div>;
 }
-export function ReviewPatch({ patch, path, theme, layout, lookup, target, splitRatio, onSplitRatioChange, notes }: {
+interface ReviewPatchProps {
   patch: string; path: string; theme: ReviewTheme; layout: 'split' | 'unified';
   lookup: (symbol: string, path: string) => void; target?: LineTarget;
   splitRatio?: number; onSplitRatioChange?: (value: number) => void; notes?: PartNotes;
-}) {
+}
+export function ReviewPatch(props: ReviewPatchProps) {
+  // A draft is tied to its file, including when the whole-file panel is reused.
+  return <ReviewPatchContent key={props.path} {...props} />;
+}
+function ReviewPatchContent({ patch, path, theme, layout, lookup, target, splitRatio, onSplitRatioChange, notes }: ReviewPatchProps) {
   const lookupRef = useRef(lookup); lookupRef.current = lookup;
+  const [selection, setSelection] = useState<LineSelection>();
+  const wrapper = useRef<HTMLDivElement>(null), pointer = useRef({ x: 0, y: 0, at: 0 }), timer = useRef<ReturnType<typeof setTimeout>>(undefined), draft = useRef(false);
+  const close = useCallback(() => { clearTimeout(timer.current); pointer.current.at = 0; setSelection(undefined); }, []);
+  useEffect(() => {
+    const cancelPending = () => { clearTimeout(timer.current); pointer.current.at = 0; };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') cancelPending(); };
+    window.addEventListener('pointerdown', cancelPending, true);
+    window.addEventListener('keydown', onKey);
+    return () => { cancelPending(); window.removeEventListener('pointerdown', cancelPending, true); window.removeEventListener('keydown', onKey); };
+  }, []);
+  useEffect(() => { clearTimeout(timer.current); pointer.current.at = 0; }, [patch, target, layout]);
+  // Only pointer selections offer actions; programmatic jumps also select lines.
+  const selected = useRef((range: SelectedLineRange | null) => {
+    clearTimeout(timer.current);
+    if (draft.current) return;
+    setSelection(undefined);
+    if (!range || Date.now() - pointer.current.at > 1_000) return;
+    const { x, y } = pointer.current;
+    timer.current = setTimeout(() => setSelection({ side: range.side === 'deletions' ? 'old' : 'current', endSide: (range.endSide ?? range.side) === 'deletions' ? 'old' : 'current', start: range.start, end: range.end, x, y }), LINE_ACTIONS_DELAY_MS);
+  });
   // Resizing changes inherited CSS only; keep Pierre's rendered patch stable.
   const diff = useMemo(() => (
     <PatchDiff patch={patch} lineAnnotations={notes?.anchors.map(({ part, side, lineNumber }) => ({ side, lineNumber, metadata: part }))}
       renderAnnotation={annotation => <PartNote index={annotation.metadata} part={notes!.parts[annotation.metadata]!} />} selectedLines={target?.path === path ? { start: target.line, end: target.line, side: target.side === 'old' ? 'deletions' : 'additions' } : undefined}
       options={{ theme, themeType: theme.endsWith('dark') ? 'dark' : 'light', diffStyle: layout, preferredHighlighter: 'shiki-js',
         enableLineSelection: true, disableFileHeader: true, hunkSeparators: 'line-info-basic', unsafeCSS: separatorCSS, useTokenTransformer: true,
+        onLineSelected: range => selected.current(range),
         onTokenClick: (token, event) => {
           if (event.altKey) { event.preventDefault(); const symbol = token.tokenText.trim(); if (/^[A-Za-z_$][\w$]{1,79}$/.test(symbol)) lookupRef.current(symbol, path); }
         },
       }} />
   ), [patch, target, path, theme, layout, notes]);
-  return <div className="relative" data-testid="patch-pane">
+  return <div ref={wrapper} className="relative" data-testid="patch-pane" onPointerUp={event => {
+    const rect = wrapper.current!.getBoundingClientRect();
+    pointer.current = { x: Math.max(8, Math.min(event.clientX - rect.left - 12, rect.width - 240)), y: event.clientY - rect.top + 14, at: Date.now() };
+  }}>
     {layout === 'split' && splitRatio !== undefined && onSplitRatioChange && <SplitDivider value={splitRatio} onChange={onSplitRatioChange} path={path} />}
     {diff}
+    {selection && <LineActions key={`${selection.side}:${selection.start}:${selection.endSide}:${selection.end}`} path={path} selection={selection} close={close} draft={draft} />}
   </div>;
 }
 

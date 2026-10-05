@@ -43,6 +43,8 @@ export interface ChangedFile {
   newMode?: string;
   oldBlobSha?: string;
   newBlobSha?: string;
+  // Provider-specific file hash used in diff page anchors: SHA-256 (GitHub) or SHA-1 (GitLab) of the path.
+  diffAnchor?: string;
 }
 export interface Review {
   target: ReviewTarget;
@@ -54,6 +56,7 @@ export interface Review {
   headSha: string;
   repository?: string;
   baseSha?: string;
+  startSha?: string;
   baseRepository?: string;
   files: ChangedFile[];
   warnings: string[];
@@ -67,4 +70,6 @@ export interface Layer {
 }
 export interface LayerGroup { id: string; title: string; layers: string[] }
 export interface Analysis { summary: string; layers: Layer[]; groups?: LayerGroup[]; source: 'model' | 'local'; warnings: string[] }
-export interface Session { review: Review; analysis: Analysis; aiEnabled: boolean; demo: boolean }
+export interface Session { review: Review; analysis: Analysis; aiEnabled: boolean; demo: boolean; commentsEnabled?: boolean }
+export type LineSide = 'old' | 'current';
+export interface CommentInput { path: string; side: LineSide; start: number; end: number; endSide?: LineSide; body: string }

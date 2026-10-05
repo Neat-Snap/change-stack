@@ -2,14 +2,16 @@ import { RepositoryReadError } from './core/repository';
 import type { ReviewTools } from './core/review-tools';
 import page from './web/index.html';
 import { ask } from './core/analysis';
-import type { AIConfig, Session } from './core/types';
+import type { AIConfig, CommentInput, Session } from './core/types';
+import { CommentError } from './core/providers';
 import { serviceUrl } from './core/target';
 
-export function startServer(session: Session, ai?: AIConfig, port = 0, publicOrigin?: string, hostname = '127.0.0.1', tools?: ReviewTools) {
+export function startServer(session: Session, ai?: AIConfig, port = 0, publicOrigin?: string, hostname = '127.0.0.1', tools?: ReviewTools,
+  comment?: (input: CommentInput) => Promise<{ url: string }>) {
   const publicUrl = publicOrigin ? serviceUrl(publicOrigin) : undefined;
   if (publicUrl && publicUrl.pathname !== '/') throw new Error('The public URL must be an origin without a path.');
   const secret = crypto.randomUUID() + crypto.randomUUID();
-  let chatBusy = false;
+  let chatBusy = false, commentBusy = false;
   let reads = 0;
   const server = Bun.serve({
     hostname, port, development: false, maxRequestBodySize: 32_768,
@@ -44,6 +46,23 @@ export function startServer(session: Session, ai?: AIConfig, port = 0, publicOri
           return json(await tools.lookup(body.symbol, body.path));
         } catch (error) { return json({ error: error instanceof RepositoryReadError ? error.message : 'Could not load code at the reviewed commit. Check your repository access and try again.' }, 422); }
         finally { reads--; }
+      }
+      if (url.pathname === '/api/comment' && request.method === 'POST') {
+        if (!comment) return json({ error: 'Commenting is unavailable for this review.' }, 400);
+        if (commentBusy) return json({ error: 'A comment is already being posted.' }, 429);
+        commentBusy = true;
+        try {
+          let body: any;
+          try { body = await request.json(); }
+          catch { return json({ error: 'Invalid comment.' }, 400); }
+          const line = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 1;
+          if (!body || typeof body.path !== 'string' || !session.review.files.some(f => f.path === body.path) || !['old', 'current'].includes(body.side)
+            || (body.endSide !== undefined && !['old', 'current'].includes(body.endSide))
+            || !line(body.start) || !line(body.end) || typeof body.body !== 'string' || !body.body.trim() || body.body.length > 20_000) return json({ error: 'Invalid comment.' }, 400);
+          return json(await comment({ path: body.path, side: body.side, start: body.start, end: body.end, endSide: body.endSide, body: body.body }));
+        } catch (error) {
+          return json({ error: error instanceof CommentError ? error.message : 'Could not confirm whether the comment was posted. Check the original diff before trying again.' }, error instanceof CommentError ? 422 : 502);
+        } finally { commentBusy = false; }
       }
       if (url.pathname === '/api/ask' && request.method === 'POST') {
         if (!ai) return json({ error: 'AI is not configured for this session.' }, 400);

@@ -22,7 +22,8 @@ export function diagnosticReason(error: unknown, depth = 0): string {
   if (value?.name === 'TimeoutError') return 'The model request timed out.';
   if (value?.name === 'AbortError') return 'The request was aborted.';
   if (['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
-    'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'CERT_HAS_EXPIRED', 'ERR_TLS_CERT_ALTNAME_INVALID'].includes(value?.code ?? '')) {
+    'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'CERT_HAS_EXPIRED', 'ERR_TLS_CERT_ALTNAME_INVALID',
+    'CERT_SIGNATURE_FAILURE', 'CERT_NOT_YET_VALID', 'CERT_UNTRUSTED', 'CERT_REJECTED', 'CERTIFICATE_VERIFY_FAILED'].includes(value?.code ?? '')) {
     return 'TLS certificate verification failed. Check your corporate CA certificate (CHANGE_STACK_CA_FILE).';
   }
   if (['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'ETIMEDOUT', 'ConnectionRefused', 'FailedToOpenSocket'].includes(value?.code ?? '')) {

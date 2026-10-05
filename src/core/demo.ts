@@ -1,4 +1,4 @@
-import { makePatch, countChanges } from './providers';
+import { addDiffAnchors, makePatch, countChanges } from './providers';
 import { wholeRanges } from './changes';
 import { localAnalysis } from './analysis';
 import type { ChangedFile, Session } from './types';
@@ -16,6 +16,7 @@ export function demoSession(): Session {
     url: 'https://gitlab.example.internal/platform/workspace/-/merge_requests/142' }, title: 'Make teammate invitations safer to accept',
     description: 'Reject expired invitation tokens, validate requests at the API boundary, and surface errors in the invitation form.',
     author: 'alex', sourceBranch: 'fix/invitation-expiry', targetBranch: 'main', headSha: 'c5e3a1498fbb', files, warnings: [] };
+  addDiffAnchors(review);
   const [service, routes, form, tests] = files.map(f => f.path) as [string, string, string, string];
   return { review, aiEnabled: false, demo: true, analysis: { ...localAnalysis(review),
     groups: [{ id: 'group-0', title: 'Safer acceptance', layers: ['demo-api', 'demo-tests'] }, { id: 'group-1', title: 'Invite form', layers: ['demo-ui'] }],

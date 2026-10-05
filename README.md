@@ -12,6 +12,7 @@
 - **Categories** – a short free-form label per layer, such as "Backend fix" or "UI change".
 - **Whole-file panel** – when a layer shows part of a file, open the full diff in a resizable side panel.
 - **Reading tools** – split/unified diffs, search (`⌘/Ctrl K`), keyboard navigation, nearby context, symbol lookup, reviewed-file progress, four GitHub/GitLab themes.
+- **Original diff and comments** – select a line or range by its line number; after a short pause, open it in GitHub/GitLab or write an inline comment.
 
 ## Install
 
@@ -36,9 +37,13 @@ cstack --help                           # all options
 
 On first run, the CLI asks for a read-only Git token and your model's base URL, model ID, and API key. Keep the terminal open while reviewing; `Ctrl+C` stops the local server.
 
+Posting comments requires a GitLab token with the `api` scope or a GitHub fine-grained token with **Pull requests: Read and write** for the repository. Run `cstack --setup` to replace a read-only token. Comments are sent to the original review under your account when you click **Post**; demo mode only offers original-diff links. Comments spanning separate diff hunks or expanded lines outside the original diff are unavailable.
+
 Settings and credentials live in `~/.change-stack/` (plaintext, mode `0600`). Delete that directory to remove them.
 
 ## Development
+
+An installable addon to IntelliJ's native GitLab review UI is in [`ide-plugin/`](ide-plugin/README.md). It analyzes the selected MR using IDEA's GitLab account and a bundled analyzer, then adds native semantic grouping and explanations. See the [full laptop installation guide](docs/intellij-gitlab-install.md). The CLI's `--export-ide` option remains available for analysis snapshots.
 
 Requires Bun 1.3.14.
 
@@ -48,4 +53,5 @@ bun run demo          # run the UI with sample data
 bun run typecheck && bun run test
 bun run build         # dist/cstack for this platform
 bun run test:tls && bun run test:ui
+bun run test:line-actions  # browser checks with local comment stubs
 ```

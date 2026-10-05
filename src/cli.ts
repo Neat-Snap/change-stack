@@ -6,7 +6,7 @@ import * as p from '@clack/prompts';
 import { parseArgs } from 'node:util';
 import { configPath, loadConfig, promptPath, saveConfig } from './core/config';
 import { parseTarget, serviceUrl, tokenCreationUrl } from './core/target';
-import { fetchReview, validateHost } from './core/providers';
+import { fetchReview, postComment, validateHost } from './core/providers';
 import { analyze, complete, localAnalysis, preparationMessage } from './core/analysis';
 import { ReviewRecoveryError } from './core/review-recovery';
 import { reviewTools, type ReviewTools } from './core/review-tools';
@@ -16,6 +16,8 @@ import { configureDiagnostics, diagnose, diagnosticReason, ModelError } from './
 import { discoverModelSettings, readModelSettings, type ModelSettings } from './core/model-settings';
 import { demoSession } from './core/demo';
 import { startServer } from './server';
+import { exportIdeAnalysis } from './core/ide-export';
+import { ideRequestMain } from './core/ide-request';
 import type { AIConfig, Config, HostConfig, Provider, ReviewTarget } from './core/types';
 
 function answer<T>(value: T): Exclude<T, symbol> {
@@ -32,8 +34,8 @@ async function setupHost(config: Config, target: ReviewTarget, noOpen: boolean):
   const baseUrl = answer(await p.text({ message: 'Git service base URL (include its prefix if hosted under a subpath)', initialValue: target.origin,
     validate(value) { try { if (serviceUrl(value ?? '').origin !== target.origin) return 'Use the same host as your review URL.'; } catch { return 'Enter a valid HTTP(S) URL.'; } } }));
   const url = tokenCreationUrl(target.provider, baseUrl);
-  p.note(target.provider === 'gitlab' ? 'Create a personal access token with read_api scope. Set an expiry according to your company policy.'
-    : 'Create a fine-grained token for this repository with Pull requests: Read and Contents: Read. Organization approval may be required.', 'Read-only access');
+  p.note(target.provider === 'gitlab' ? 'Create a personal access token with read_api scope. Set an expiry according to your company policy.\nTo post comments from the review, choose the api scope instead.'
+    : 'Create a fine-grained token for this repository with Pull requests: Read and Contents: Read. Organization approval may be required.\nTo post comments from the review, grant Pull requests: Read and write instead.', 'Git access');
   p.log.info(`Create your token: ${url}`);
   if (!noOpen) await openBrowser(url);
   while (true) {
@@ -97,16 +99,18 @@ async function setupAI(config: Config, importPath?: string): Promise<AIConfig | 
 }
 
 async function main() {
+  if (Bun.argv.slice(2).includes('--ide-request')) { await ideRequestMain(); return; }
   const { values, positionals } = parseArgs({ args: Bun.argv.slice(2), allowPositionals: true, options: {
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' }, demo: { type: 'boolean' }, 'no-open': { type: 'boolean' }, 'no-ai': { type: 'boolean' },
     setup: { type: 'boolean' }, 'setup-ai': { type: 'boolean' }, 'import-settings': { type: 'string' }, debug: { type: 'boolean' }, 'check-ai': { type: 'boolean' },
     'no-json-mode': { type: 'boolean' }, 'no-reasoning': { type: 'boolean' }, port: { type: 'string' }, listen: { type: 'string' }, 'public-url': { type: 'string' },
     'system-prompt': { type: 'string' }, 'system-prompt-file': { type: 'string' }, language: { type: 'string' }, 'default-language': { type: 'string' },
     'max-tool-calls': { type: 'string' }, 'max-context-chars': { type: 'string' }, 'max-output-tokens': { type: 'string' }, 'model-timeout': { type: 'string' },
+    'export-ide': { type: 'string' },
   } });
   if (values.version) { console.log(version); return; }
   if (values.debug) configureDiagnostics(event => console.error(`[cstack debug] ${JSON.stringify(event)}`));
-  if (values.help) { console.log(`Change Stack\n\nUsage: cstack [review-url] [options]\n\n  --version    Show the executable version\n  --setup      Configure or replace Git and AI credentials\n  --setup-ai   Configure the model; offer existing settings import\n  --import-settings PATH      Import models and key choices from another file\n  --check-ai    Test chat and JSON completions without a review\n  --debug       Print request timings and safe failure details\n  --no-json-mode              Omit response_format for endpoints without JSON mode\n  --no-reasoning              Omit optional reasoning and thinking settings\n  --no-ai      Review without contacting the model\n  --no-open    Print URLs without launching a browser\n  --port N     Choose the local server port (default: 4317; 0: automatic)\n  --listen HOST               Bind address (default: 127.0.0.1)\n  --public-url ORIGIN          Browser origin for container/proxy access\n  --language en|ru             Override language for this review\n  --default-language en|ru     Save the default language (no URL needed)\n  --system-prompt TEXT         Replace the default explanation prompt\n  --system-prompt-file PATH    Read a replacement prompt from a UTF-8 file\n  --max-tool-calls N           Repository reads (default: 6, range: 0–20)\n  --max-context-chars N        Input characters per model call (default: 48000)\n  --max-output-tokens N        Output cap (default: provider setting; 0: omit)\n  --model-timeout SECONDS      Override the model request timeout (1–600)\n  --demo       Open a sample review with no outbound requests\n\nSettings and credentials: ${configPath()}\nEditable system prompt: ${promptPath()}\nCredentials are saved in a local plaintext file with mode 0600 on POSIX.\nCode, questions, and analysis are held in memory and discarded on exit.`); return; }
+  if (values.help) { console.log(`Change Stack\n\nUsage: cstack [review-url] [options]\n\n  --version    Show the executable version\n  --setup      Configure or replace Git and AI credentials\n  --setup-ai   Configure the model; offer existing settings import\n  --import-settings PATH      Import models and key choices from another file\n  --check-ai    Test chat and JSON completions without a review\n  --debug       Print request timings and safe failure details\n  --no-json-mode              Omit response_format for endpoints without JSON mode\n  --no-reasoning              Omit optional reasoning and thinking settings\n  --no-ai      Review without contacting the model\n  --no-open    Print URLs without launching a browser\n  --port N     Choose the local server port (default: 4317; 0: automatic)\n  --listen HOST               Bind address (default: 127.0.0.1)\n  --public-url ORIGIN          Browser origin for container/proxy access\n  --language en|ru             Override language for this review\n  --default-language en|ru     Save the default language (no URL needed)\n  --system-prompt TEXT         Replace the default explanation prompt\n  --system-prompt-file PATH    Read a replacement prompt from a UTF-8 file\n  --max-tool-calls N           Repository reads (default: 6, range: 0–20)\n  --max-context-chars N        Input characters per model call (default: 48000)\n  --max-output-tokens N        Output cap (default: provider setting; 0: omit)\n  --model-timeout SECONDS      Override the model request timeout (1–600)\n  --export-ide PATH           Export analysis JSON for IntelliJ and exit\n  --demo       Open a sample review with no outbound requests\n\nSettings and credentials: ${configPath()}\nEditable system prompt: ${promptPath()}\nCredentials are saved in a local plaintext file with mode 0600 on POSIX.\nCode, questions, and analysis are held in memory and discarded on exit.`); return; }
   const port = values.port === undefined ? 4317 : Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Port must be an integer between 0 and 65535.');
   const listen = values.listen ?? '127.0.0.1';
@@ -176,6 +180,7 @@ async function main() {
   let session;
   let ai: AIConfig | undefined;
   let tools: ReviewTools | undefined;
+  let comment: Parameters<typeof startServer>[6];
   if (values.demo) session = demoSession();
   else {
     let url = positionals[0];
@@ -215,9 +220,16 @@ async function main() {
       catch (e) { spinner.stop('Review preparation failed'); throw e; }
     }
     tools = reviewTools(review, host);
-    session = { review, analysis, aiEnabled: !!ai, demo: false };
+    comment = input => postComment(review, host, input);
+    session = { review, analysis, aiEnabled: !!ai, demo: false, commentsEnabled: true };
   }
-  const { server, url } = startServer(session, ai, port, values['public-url'], listen, tools);
+  if (values['export-ide'] !== undefined) {
+    if (!values['export-ide'].trim()) throw new Error('Choose an output JSON file for --export-ide.');
+    await exportIdeAnalysis(session, values['export-ide']);
+    p.outro(`IntelliJ analysis exported to ${values['export-ide']}. Import it in the Change Stack tool window.`);
+    return;
+  }
+  const { server, url } = startServer(session, ai, port, values['public-url'], listen, tools, comment);
   p.outro(`Review ready: ${url}\nKeep this terminal running. Press Ctrl+C to close the review.`);
   if (!values['no-open']) void openBrowser(url);
   for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => { server.stop(true); process.exit(0); });

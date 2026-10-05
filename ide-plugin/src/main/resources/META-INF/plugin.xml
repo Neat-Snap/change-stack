@@ -1,0 +1,40 @@
+<idea-plugin>
+    <id>dev.changestack.reviews</id>
+    <name>Change Stack</name>
+    <vendor>Change Stack</vendor>
+    <description><![CDATA[
+      Extends JetBrains' bundled GitLab merge-request review UI.
+      Analyze the open MR using its existing GitLab account and a bundled analyzer,
+      automatically group native files, and read semantic explanations and part notes
+      in the original GitLab diff. Configure the analysis model in IDEA; no manual
+      analysis export/import is required. Native authentication, diffs and comments
+      remain owned by GitLab. Uses version-sensitive internal MR/account interfaces.
+    ]]></description>
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.vcs</depends>
+    <depends>org.jetbrains.plugins.gitlab</depends>
+    <depends>Git4Idea</depends>
+    <extensions defaultExtensionNs="com.intellij">
+        <changesGroupingPolicy key="cstack.semantic" weight="1000" implementationClass="dev.changestack.intellij.SemanticGroupingFactory"/>
+        <diff.DiffExtension implementation="dev.changestack.intellij.SemanticDiffExtension"/>
+    </extensions>
+    <projectListeners>
+        <listener class="dev.changestack.intellij.GitLabReviewHeader$WindowListener" topic="com.intellij.openapi.wm.ex.ToolWindowManagerListener"/>
+    </projectListeners>
+    <actions>
+        <action id="ChangeStack.AnalyzeGitLab" class="dev.changestack.intellij.AnalyzeGitLabAction" text="Analyze with Change Stack" description="Analyze this GitLab merge request and group its native files semantically"/>
+        <action id="ChangeStack.ModelSettings" class="dev.changestack.intellij.GitLabSemanticActions$Settings" text="Analysis settings…"/>
+        <action id="ChangeStack.Clear" class="dev.changestack.intellij.GitLabSemanticActions$Clear" text="Clear semantic review"/>
+        <group id="ChangeStack.GitLab" text="Change Stack" popup="true">
+            <reference ref="ChangeStack.AnalyzeGitLab"/>
+            <separator/>
+            <reference ref="ChangeStack.ModelSettings"/>
+            <reference ref="ChangeStack.Clear"/>
+            <add-to-group group-id="GitLab.Merge.Request.Changes.Popup"/>
+            <add-to-group group-id="GitLab.Merge.Request.Details.Popup"/>
+        </group>
+        <action id="ChangeStack.SemanticGrouping" class="dev.changestack.intellij.SemanticGroupingAction" text="Semantic Layers" description="Group whole files by the imported Change Stack layers">
+            <add-to-group group-id="ChangesView.GroupBy"/>
+        </action>
+    </actions>
+</idea-plugin>
