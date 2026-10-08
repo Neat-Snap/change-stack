@@ -40,32 +40,9 @@ jobs:
             dist/cstack-*-macos-arm64.tar.gz
             dist/SHA256SUMS
           if-no-files-found: error
-  image:
-    needs: macos
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build and test container
-        run: |
-          docker build -t change-stack:release .
-          bash scripts/smoke-container.sh change-stack:release
-      - name: Publish versioned image
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REGISTRY_USER: ${{ github.actor }}
-          REPOSITORY: ${{ github.repository }}
-          VERSION: ${{ github.ref_name }}
-        run: |
-          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$REGISTRY_USER" --password-stdin
-          IMAGE="ghcr.io/${REPOSITORY,,}"
-          docker tag change-stack:release "$IMAGE:$VERSION"
-          docker push "$IMAGE:$VERSION"
   publish:
-    needs: [macos, image]
-    runs-on: ubuntu-24.04
+    needs: macos
+    runs-on: macos-15
     permissions:
       contents: write
     steps:

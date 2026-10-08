@@ -1,6 +1,6 @@
-# Change Stack v0.1.5
+# Change Stack v0.1.6
 
-Review conversations now live alongside the code in your browser.
+Fixes line selection: dragging across line numbers no longer loses the selection (and its comment popover) when conversations refresh.
 
 - Show GitLab and GitHub review threads directly in split/unified diffs, logical layers, and the whole-file panel. Open threads expand; resolved threads start collapsed.
 - Reply, resolve, and reopen threads using your saved Git token. New inline comments immediately appear as threads. Posting failures preserve your draft.
@@ -15,5 +15,3 @@ Conversation refresh preserves the reviewed diff snapshot. If new commits or a c
 Token permissions are unchanged from v0.1.4: GitLab’s `api` scope, or GitHub **Contents: Read-only** and **Pull requests: Read and write**. Repository permissions still determine which threads you can resolve or reopen.
 
 The standalone download is for **macOS Apple Silicon (arm64)** and includes the binary, English/Russian instructions, and license notices. No Bun or Node.js is required. Verify the archive using `SHA256SUMS`. The binary is unsigned and not notarized.
-
-A Linux amd64 container is published as `ghcr.io/neat-snap/change-stack:v0.1.5`. Access follows the package’s visibility settings.

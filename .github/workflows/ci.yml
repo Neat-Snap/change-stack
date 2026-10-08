@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        os: [macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -25,7 +25,7 @@ jobs:
       - run: bun run test
       - run: bun run build
       - run: bun run test:tls
-      - run: bunx playwright install --with-deps chromium
+      - run: bunx playwright install chromium
       - run: bun run test:ui
       - run: bun run test:line-actions
       - name: Check review conversations
@@ -45,10 +45,3 @@ jobs:
             dist/cstack-*-macos-arm64.tar.gz
             dist/SHA256SUMS
           if-no-files-found: error
-  container:
-    needs: validate
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - run: docker build -t change-stack:test .
-      - run: bash scripts/smoke-container.sh change-stack:test

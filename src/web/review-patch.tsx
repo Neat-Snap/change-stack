@@ -42,7 +42,7 @@ export function ReviewPatch(props: ReviewPatchProps) {
 }
 function ReviewPatchContent({ patch, path, theme, layout, lookup, target, splitRatio, onSplitRatioChange, notes }: ReviewPatchProps) {
   const conversation = useConversation();
-  const annotations = useMemo(() => {
+  const computed = useMemo(() => {
     const entries = new Map<string, { side: 'additions' | 'deletions'; lineNumber: number; metadata: { parts: number[]; threads: ReviewThread[] } }>();
     function at(side: 'additions' | 'deletions', lineNumber: number) {
       const key = `${side}:${lineNumber}`;
@@ -57,6 +57,11 @@ function ReviewPatchContent({ patch, path, theme, layout, lookup, target, splitR
     }
     return [...entries.values()];
   }, [conversation.conversation, patch, path, notes]);
+  // Polling replaces conversation data; keep annotations stable so the diff does not re-render and drop a live line selection.
+  const stable = useRef<{ key: string; value: typeof computed }>(undefined);
+  const key = JSON.stringify(computed);
+  if (stable.current?.key !== key) stable.current = { key, value: computed };
+  const annotations = stable.current.value;
   const lookupRef = useRef(lookup); lookupRef.current = lookup;
   const [selection, setSelection] = useState<LineSelection>();
   const wrapper = useRef<HTMLDivElement>(null), pointer = useRef({ x: 0, y: 0, at: 0 }), timer = useRef<ReturnType<typeof setTimeout>>(undefined), draft = useRef(false);
