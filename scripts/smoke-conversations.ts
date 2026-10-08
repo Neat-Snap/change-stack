@@ -59,7 +59,14 @@ try {
   await openConversation(); await expect(view.getByTestId('review-thread')).toHaveCount(6); await screenshot('06-conversation-overview');
   await view.getByRole('tab', { name: 'Resolved 1', exact: true }).click(); await expect(view.getByTestId('review-thread')).toHaveCount(1);
   await view.getByRole('tab', { name: 'Open 4', exact: true }).click(); await expect(view.getByTestId('review-thread')).toHaveCount(4);
+  const contextThread = view.locator('[data-thread-id=sample-open]');
+  await expect(contextThread.getByTestId('thread-code-snippet')).toContainText('value: limit.clearQueue');
+  await expect(contextThread.getByTestId('thread-code-snippet').locator('[data-selected=true]')).toContainText('value: limit.clearQueue');
+  await expect(contextThread.getByRole('button', { name: '1. Expose queue control', exact: true })).toBeVisible();
+  await contextThread.scrollIntoViewIfNeeded(); await screenshot('12-conversation-code-context');
   const outdated = view.locator('[data-thread-id=sample-outdated]'); await expect(outdated).toContainText('Outdated'); await expect(outdated.getByRole('button', { name: 'View in diff' })).toHaveCount(0);
+  await expect(outdated.getByTestId('thread-code-snippet')).toContainText('return pLimit(options)');
+  await expect(outdated.getByRole('button', { name: '1. Expose queue control', exact: true })).toHaveCount(0);
   await outdated.scrollIntoViewIfNeeded(); await screenshot('07-outdated-thread');
   await view.getByRole('tab', { name: 'Discussion', exact: true }).click(); await expect(view.getByTestId('review-thread')).toHaveCount(1);
   await view.getByRole('button', { name: 'New discussion' }).click(); await view.getByRole('textbox', { name: 'New discussion' }).fill('Ready to merge once the queue regression test lands.');
@@ -74,6 +81,7 @@ try {
   preview.mock.externalReply('sample-single'); await page.clock.fastForward(5 * 60 * 1000);
   await expect(view.locator('[data-thread-id=sample-single]').getByTestId('thread-comment')).toHaveCount(2);
   await closeConversation(); await page.getByTestId('layer-button').first().click();
+  await expect(page.getByTestId('file-diff')).toHaveCount(2);
   const region = page.getByRole('region', { name: 'index.js', exact: true });
   await region.locator('[data-column-number="122"][data-line-type="change-addition"]').first().click();
   await expect(region.getByTestId('line-actions')).toBeVisible(); await region.getByRole('button', { name: 'Comment', exact: true }).click();
@@ -96,6 +104,14 @@ try {
   await expect(inline('sample-single')).toBeVisible();
   await page.setViewportSize({ width: 1024, height: 900 }); await openConversation();
   await expect(view.getByRole('heading', { name: 'Review conversation' })).toBeVisible();
+  await view.locator('[data-thread-id=sample-open]').getByRole('button', { name: '1. Expose queue control', exact: true }).click();
+  await expect(view).toHaveCount(0); await expect(page.getByTestId('file-diff')).toHaveCount(2);
+  await expect(page.getByTestId('layer-button').first()).toHaveAttribute('data-active', 'true');
+  await expect(inline('sample-open')).toBeVisible();
+  await openConversation();
+  await view.locator('[data-thread-id=sample-open]').getByRole('button', { name: 'View in diff', exact: true }).click();
+  await expect(view).toHaveCount(0); await expect(page.getByTestId('file-diff')).toHaveCount(5);
+  await expect(page.getByRole('button', { name: 'All changes 5', exact: true })).toHaveAttribute('data-active', 'true');
   if (errors.length) throw new Error(errors.join('; '));
-  console.log('Conversation UI passed: inline posts, replies, retained drafts, resolve/reopen, filters, long/outdated threads, manual/5-minute refresh, failure recovery, and new discussions.');
+  console.log('Conversation UI passed: code excerpts and full-diff/layer jumps, historical snippets, inline posts, replies, retained drafts, resolve/reopen, filters, long/outdated threads, manual/5-minute refresh, failure recovery, and new discussions.');
 } finally { await browser.close(); preview.server.stop(true); }

@@ -52,8 +52,8 @@ test('GitLab loads paginated threaded notes, skips system events, preserves reso
 test('GitHub paginates threads and their replies, combines review bodies and discussions, and uses thread mutations', async () => {
   const calls: { path: string; body: any }[] = [];
   let changed = false;
-  const note = (id: number) => ({ id: `note${id}`, databaseId: id, body: `Comment ${id}`, createdAt: timestamp, url: `https://example.test/${id}`, author: { login: 'alice' } });
-  const node = (id: string) => ({ id, path: 'file.ts', line: 15, startLine: 13, diffSide: 'RIGHT', startDiffSide: 'LEFT', isResolved: id === 'resolved', isOutdated: false,
+  const note = (id: number) => ({ id: `note${id}`, databaseId: id, body: `Comment ${id}`, createdAt: timestamp, url: `https://example.test/${id}`, diffHunk: '@@ -5,3 +5,3 @@\n old\n-before\n+after\n end\n', author: { login: 'alice' } });
+  const node = (id: string) => ({ id, path: 'file.ts', line: 15, startLine: 13, originalLine: 6, originalStartLine: 5, diffSide: 'RIGHT', startDiffSide: 'LEFT', isResolved: id === 'resolved', isOutdated: false,
     viewerCanReply: true, viewerCanResolve: true, viewerCanUnresolve: false, resolvedBy: id === 'resolved' ? { login: 'bob' } : null,
     comments: { nodes: [note(42)], pageInfo: { hasNextPage: id === 'open', endCursor: 'comment-cursor' } } });
   const { service } = fixture('github', async request => {
@@ -87,7 +87,7 @@ test('GitHub paginates threads and their replies, combines review bodies and dis
   ]);
   expect(calls.filter(call => call.path.endsWith('/issues/7/comments')).map(call => call.body.body)).toEqual(['General reply', 'New discussion']);
   changed = true; expect((await service.load()).reviewChanged).toBe(true);
-  expect((await service.load()).threads.find(t => t.id === 'open')!.outdated).toBe(true);
+  expect((await service.load()).threads.find(t => t.id === 'open')!).toMatchObject({ outdated: true, position: { line: 6, startLine: 5 }, diffHunk: expect.stringContaining('+after') });
 });
 
 test('provider errors are safe and credentials cannot cross review hosts', async () => {

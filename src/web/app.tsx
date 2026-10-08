@@ -26,7 +26,7 @@ import { ConversationView } from './conversation';
 import { ReviewIntro, NextLayer, reviewRef, type LayerStat } from './review-intro';
 import { CodePeek, type PeekState } from './code-peek';
 import type { SymbolResult } from '../core/review-tools';
-import { findDiffLine, layerFile, partAnchors } from '../core/changes';
+import { layerFile, partAnchors } from '../core/changes';
 import { CategoryPill, LayerMap } from './layer-map';
 import { Shortcuts } from './shortcuts';
 import type { ChangedFile, Session } from '../core/types';
@@ -152,9 +152,9 @@ function ReviewWorkspace({ session }: { session: Session }) {
     });
   }
   useEffect(() => { if (pendingJump.current) performJump(); }, [activeLayer, collapsed]);
-  function jumpAnywhere(path: string, line?: number, side: 'old' | 'current' = 'current') {
+  function jumpAnywhere(path: string, line?: number, side: 'old' | 'current' = 'current', layerId = 'all') {
     setConversationOpen(false);
-    setActiveLayer('all');
+    setActiveLayer(layerId);
     setFileCollapsed(path, false);
     pendingJump.current = { path, line, side };
     setTarget(line ? { path, line, side, serial: Date.now() } : undefined);
@@ -365,12 +365,13 @@ function ReviewWorkspace({ session }: { session: Session }) {
           <ReviewPatch patch={review.files.find(f => f.path === panel)!.patch} path={panel} theme={theme} layout="unified" lookup={(symbol, path) => void lookupSymbol(symbol, path)} />
         </Virtualizer>
       </SidePanel>}
-      {conversationOpen && <ConversationView close={() => setConversationOpen(false)} service={review.target.provider === 'gitlab' ? 'GitLab' : 'GitHub'} canJump={thread => {
-        const position = thread.position, file = review.files.find(file => file.path === position?.path);
-        return !!(position && file && findDiffLine(file, position.line, position.side));
-      }} jump={thread => {
+      {conversationOpen && <ConversationView close={() => setConversationOpen(false)} review={review} layers={analysis.layers} service={review.target.provider === 'gitlab' ? 'GitLab' : 'GitHub'} jump={(thread, destination) => {
         const position = thread.position;
-        if (position) jumpAnywhere(position.path, position.line, position.side);
+        if (!position) return;
+        const file = position.side === 'old'
+          ? review.files.find(file => file.oldPath === position.path) ?? review.files.find(file => file.path === position.path)
+          : review.files.find(file => file.path === position.path);
+        if (file) jumpAnywhere(file.path, destination?.line ?? position.line, destination?.side ?? position.side, destination?.layerId);
       }} />}
       </div>
       {mapOpen && <section className="absolute inset-0 z-40 flex flex-col bg-background" aria-label="Layer map" data-testid="map-overlay">

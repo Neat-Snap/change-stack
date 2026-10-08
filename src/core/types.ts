@@ -85,6 +85,8 @@ export interface ReviewThread {
   canReply: boolean;
   resolvedBy?: string;
   outdated?: boolean;
+  path?: string;
+  diffHunk?: string;
   position?: { path: string; line: number; side: LineSide; startLine?: number; startSide?: LineSide };
   replyId?: number;
   individual?: boolean;

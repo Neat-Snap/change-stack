@@ -3,7 +3,8 @@ import { Check, CheckCheck, ChevronDown, ChevronRight, ExternalLink, MessageCirc
 import { Button } from './components/ui/button';
 import { Summary } from './summary';
 import { useConversation } from './conversation-state';
-import type { ReviewThread, ThreadComment } from '../core/types';
+import type { Layer, Review, ReviewThread, ThreadComment } from '../core/types';
+import { ThreadCodeContext } from './thread-context';
 
 function Avatar({ author, small = false }: { author: string; small?: boolean }) {
   const colors = ['bg-blue-500/15 text-blue-600 dark:text-blue-300', 'bg-violet-500/15 text-violet-600 dark:text-violet-300', 'bg-amber-500/15 text-amber-700 dark:text-amber-300', 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'];
@@ -32,7 +33,7 @@ function Comment({ comment }: { comment: ThreadComment }) {
   </div>;
 }
 
-export function ThreadCard({ thread, inline = false, jump }: { thread: ReviewThread; inline?: boolean; jump?: () => void }) {
+export function ThreadCard({ thread, inline = false, context }: { thread: ReviewThread; inline?: boolean; context?: React.ReactNode }) {
   const conversation = useConversation();
   const [expanded, setExpanded] = useState<boolean>(), [allReplies, setAllReplies] = useState(false), [replying, setReplying] = useState(false);
   const [pending, setPending] = useState(false), [error, setError] = useState('');
@@ -55,7 +56,8 @@ export function ThreadCard({ thread, inline = false, jump }: { thread: ReviewThr
     finally { setPending(false); }
   }
   return <article data-testid="review-thread" data-thread-id={thread.id} data-resolved={thread.resolved} className={`min-w-0 overflow-hidden rounded-md border font-sans text-foreground ${thread.resolved ? 'border-border bg-background' : 'border-blue-500/25 bg-background'} ${inline ? 'mx-3 my-2 shadow-sm' : ''}`}>
-    <div className={`flex min-h-9 items-center gap-2 px-3 py-1.5 text-xs ${thread.resolved ? 'bg-sidebar/70' : 'bg-blue-500/5'}`}>
+    {context}
+    <div className={`flex min-h-9 items-center gap-2 px-3 py-1.5 text-xs ${context ? 'border-t' : ''} ${thread.resolved ? 'bg-sidebar/70' : 'bg-blue-500/5'}`}>
       <button onClick={() => setExpanded(!open)} aria-expanded={open} aria-label={`${open ? 'Collapse' : 'Expand'} thread by ${first.author}`} className="flex min-w-0 flex-1 items-center gap-2 text-left">
         {open ? <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />}
         {thread.resolved ? <CheckCheck className="size-3.5 shrink-0 text-green-600 dark:text-green-400" /> : thread.kind === 'diff' ? <MessageCircle className="size-3.5 shrink-0 text-blue-600 dark:text-blue-400" /> : <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" />}
@@ -65,10 +67,6 @@ export function ThreadCard({ thread, inline = false, jump }: { thread: ReviewThr
       </button>
       <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground" title={`${thread.comments.length} comments`}>{thread.comments.length} {thread.comments.length === 1 ? 'comment' : 'comments'}</span>
     </div>
-    {!inline && thread.position && <div className="flex items-center gap-2 border-t bg-sidebar/30 px-3 py-1.5 text-[11px]">
-      <button disabled={!jump} onClick={jump} className="min-w-0 truncate font-mono text-muted-foreground enabled:hover:text-foreground enabled:hover:underline">{thread.position.path} · {thread.position.side === 'old' ? 'old ' : ''}line {thread.position.line}</button>
-      {jump && <button onClick={jump} className="ml-auto shrink-0 text-blue-600 hover:underline dark:text-blue-400">View in diff</button>}
-    </div>}
     {open && <>
       <div className="divide-y border-t">
         {comments.map((comment, index) => <React.Fragment key={comment.id}>
@@ -98,7 +96,10 @@ export function ThreadCard({ thread, inline = false, jump }: { thread: ReviewThr
   </article>;
 }
 
-export function ConversationView({ close, jump, canJump, service }: { close: () => void; jump: (thread: ReviewThread) => void; canJump: (thread: ReviewThread) => boolean; service: string }) {
+export function ConversationView({ close, jump, review, layers, service }: {
+  close: () => void; review: Review; layers: Layer[]; service: string;
+  jump: (thread: ReviewThread, destination?: { layerId: string; line: number; side: 'old' | 'current' }) => void;
+}) {
   const state = useConversation();
   const threads = state.conversation?.threads ?? [];
   const [filter, setFilter] = useState<'all' | 'open' | 'resolved' | 'discussion'>('all');
@@ -129,7 +130,7 @@ export function ConversationView({ close, jump, canJump, service }: { close: () 
             className={`border-b-2 px-3 py-2 text-xs ${filter === value ? 'border-foreground font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
             {value === 'all' ? 'All' : value === 'open' ? `Open ${open}` : value === 'resolved' ? `Resolved ${resolved}` : 'Discussion'}</button>)}
         </div>
-        <div className="space-y-4">{filtered.map(thread => <ThreadCard key={thread.id} thread={thread} jump={thread.position && !thread.outdated && canJump(thread) ? () => jump(thread) : undefined} />)}</div>
+        <div className="space-y-4">{filtered.map(thread => <ThreadCard key={thread.id} thread={thread} context={thread.kind === 'diff' ? <ThreadCodeContext review={review} layers={layers} thread={thread} jump={jump} /> : undefined} />)}</div>
         {!filtered.length && <div className="rounded-md border border-dashed px-5 py-10 text-center"><MessageCircle className="mx-auto mb-2 size-6 text-muted-foreground" /><p className="text-sm font-medium">{state.loading && !state.conversation ? 'Loading conversation…' : 'No conversations here yet'}</p><p className="mt-1 text-xs text-muted-foreground">{filter === 'open' ? 'All review threads are resolved.' : 'Start a discussion or select a line in the diff to comment.'}</p></div>}
         <div className="mt-5">
           {!composing && !draft ? <Button variant="outline" size="sm" onClick={() => setComposing(true)}><MessageSquare className="size-3.5" />New discussion</Button> : <form onSubmit={event => { event.preventDefault(); void post(); }} className="rounded-md border bg-sidebar/30 p-3">

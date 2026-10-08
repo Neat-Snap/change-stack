@@ -11,12 +11,12 @@ export interface ConversationService {
   comment(body: string): Promise<void>;
 }
 const pageLimit = 100;
-const commentFields = 'id databaseId body createdAt url author { login }';
+const commentFields = 'id databaseId body createdAt url diffHunk author { login }';
 export const githubThreadsQuery = `query ReviewThreads($owner: String!, $name: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $name) { pullRequest(number: $number) {
     headRefOid baseRefOid reviewThreads(first: 100, after: $after) {
       pageInfo { hasNextPage endCursor } nodes {
-        id path line startLine diffSide startDiffSide isResolved isOutdated viewerCanReply viewerCanResolve viewerCanUnresolve resolvedBy { login }
+        id path line startLine originalLine originalStartLine diffSide startDiffSide isResolved isOutdated viewerCanReply viewerCanResolve viewerCanUnresolve resolvedBy { login }
         comments(first: 100) { pageInfo { hasNextPage endCursor } nodes { ${commentFields} } }
       }
     }
@@ -108,10 +108,13 @@ export function conversationService(review: Review, host: HostConfig): Conversat
               comments.push(...connection.nodes);
             }
             if (!comments.length) continue;
+            const outdated = node.isOutdated || reviewChanged;
+            const line = outdated ? node.originalLine ?? node.line : node.line;
+            const startLine = outdated ? node.originalStartLine ?? node.startLine : node.startLine;
             threads.push({ id: node.id, kind: 'diff', comments: comments.map(githubComment), resolved: node.isResolved, resolvable: true,
               canResolve: node.isResolved ? node.viewerCanUnresolve : node.viewerCanResolve, canReply: node.viewerCanReply,
-              resolvedBy: node.resolvedBy?.login, outdated: node.isOutdated || reviewChanged, replyId: comments[0].databaseId,
-              ...(node.line ? { position: { path: node.path, line: node.line, side: node.diffSide === 'LEFT' ? 'old' : 'current', startLine: node.startLine ?? undefined, startSide: node.startDiffSide === 'LEFT' ? 'old' : 'current' } } : {}) });
+              resolvedBy: node.resolvedBy?.login, outdated, replyId: comments[0].databaseId, path: node.path, diffHunk: comments[0].diffHunk,
+              ...(line ? { position: { path: node.path, line, side: node.diffSide === 'LEFT' ? 'old' : 'current', startLine: startLine ?? undefined, startSide: node.startDiffSide === 'LEFT' ? 'old' : 'current' } } : {}) });
           }
           if (!pr.reviewThreads.pageInfo.hasNextPage) break;
           after = pr.reviewThreads.pageInfo.endCursor;

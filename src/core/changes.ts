@@ -137,6 +137,27 @@ export function findDiffLine(file: ChangedFile, line: number, side: LineSide): D
 }
 
 export interface LineRange { side: LineSide; start: number; end: number; endSide?: LineSide }
+export type SnippetRow = (DiffLine & { text: string; selected: boolean }) | { omitted: number };
+// Retain both diff counters and bound large selections without joining unrelated hunks.
+export function diffSnippet(file: ChangedFile, range: LineRange, maxSelectedLines = 8): SnippetRow[] | undefined {
+  const matches = (row: Row, line: number, side: LineSide) => side === 'old'
+    ? row.kind !== '+' && row.old === line : row.kind !== '-' && row.current === line;
+  for (const hunk of hunks(file)) {
+    const rows = hunk.rows.filter(row => row.kind !== '\\');
+    const start = rows.findIndex(row => matches(row, range.start, range.side));
+    const end = rows.findIndex(row => matches(row, range.end, range.endSide ?? range.side));
+    if (start < 0 || end < 0) continue;
+    const first = Math.min(start, end), last = Math.max(start, end);
+    const result: SnippetRow[] = [];
+    for (let i = Math.max(0, first - 2); i <= Math.min(rows.length - 1, last + 2); i++) {
+      const half = Math.floor(maxSelectedLines / 2);
+      if (last - first + 1 > maxSelectedLines && i === first + half) { result.push({ omitted: last - first + 1 - half * 2 }); i = last - half; continue; }
+      const row = rows[i];
+      result.push({ kind: row.kind as DiffLine['kind'], old: row.old, current: row.current, text: row.text.slice(1), selected: i >= first && i <= last });
+    }
+    return result;
+  }
+}
 // Keep endpoint sides and order by patch rows, since old/new line numbers can differ.
 // A comment range must belong to one original hunk.
 export function findDiffRange(file: ChangedFile, range: LineRange): { range: LineRange; first: DiffLine; last: DiffLine; sameHunk: boolean } | undefined {
