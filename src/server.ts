@@ -2,19 +2,24 @@ import { RepositoryReadError } from './core/repository';
 import type { ReviewTools } from './core/review-tools';
 import page from './web/index.html';
 import { ask } from './core/analysis';
-import type { AIConfig, CommentInput, Session } from './core/types';
+import type { AIConfig, CommentInput, Conversation, Session } from './core/types';
 import { CommentError } from './core/providers';
+import { ConversationError, type ConversationService } from './core/conversations';
 import { serviceUrl } from './core/target';
 
 export function startServer(session: Session, ai?: AIConfig, port = 0, publicOrigin?: string, hostname = '127.0.0.1', tools?: ReviewTools,
-  comment?: (input: CommentInput) => Promise<{ url: string }>) {
+  comment?: (input: CommentInput) => Promise<{ url: string }>, conversation?: ConversationService) {
   const publicUrl = publicOrigin ? serviceUrl(publicOrigin) : undefined;
   if (publicUrl && publicUrl.pathname !== '/') throw new Error('The public URL must be an origin without a path.');
   const secret = crypto.randomUUID() + crypto.randomUUID();
   let chatBusy = false, commentBusy = false;
   let reads = 0;
+  let conversationSnapshot: Conversation | undefined, conversationRead: Promise<Conversation> | undefined, conversationBusy = false;
+  function refreshConversation(): Promise<Conversation> {
+    return conversationRead ??= conversation!.load().then(value => { conversationSnapshot = value; return value; }).finally(() => { conversationRead = undefined; });
+  }
   const server = Bun.serve({
-    hostname, port, development: false, maxRequestBodySize: 32_768,
+    hostname, port, development: false, maxRequestBodySize: 131_072,
     routes: { '/': page },
     async fetch(request: Request): Promise<Response> {
       const url = new URL(request.url);
@@ -33,6 +38,38 @@ export function startServer(session: Session, ai?: AIConfig, port = 0, publicOri
       const cookie = request.headers.get('cookie')?.split(';').map(v => v.trim()).find(v => v.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
       if (cookie !== secret) return json({ error: 'Open the URL printed by your CLI to access this session.' }, 401);
       if (url.pathname === '/api/review' && request.method === 'GET') return json(session);
+      if (url.pathname === '/api/conversation') {
+        if (request.method !== 'GET') return json({ error: 'Use GET.' }, 405);
+        if (!conversation) return json({ error: 'Conversations are unavailable for this review.' }, 400);
+        try { return json(conversationBusy && conversationSnapshot ? conversationSnapshot : await refreshConversation()); }
+        catch (error) { return json({ error: error instanceof ConversationError ? error.message : 'Could not refresh the conversation. Your last loaded comments are still shown.' }, 502); }
+      }
+      if (url.pathname === '/api/conversation/reply' || url.pathname === '/api/conversation/resolve' || url.pathname === '/api/conversation/comment') {
+        if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405);
+        if (!conversation) return json({ error: 'Conversations are unavailable for this review.' }, 400);
+        if (conversationBusy) return json({ error: 'A conversation update is already running.' }, 429);
+        let body: any;
+        try { body = await request.json(); } catch { return json({ error: 'Invalid conversation action.' }, 400); }
+        const resolving = url.pathname.endsWith('/resolve'), general = url.pathname.endsWith('/comment');
+        if (!body || (!general && (typeof body.threadId !== 'string' || body.threadId.length > 512))
+          || (resolving ? typeof body.resolved !== 'boolean' : typeof body.body !== 'string' || !body.body.trim() || body.body.length > 20_000)) return json({ error: 'Invalid conversation action.' }, 400);
+        if (conversationBusy) return json({ error: 'A conversation update is already running.' }, 429);
+        conversationBusy = true;
+        try {
+          if (general) await conversation.comment(body.body);
+          else {
+            if (conversationRead) await conversationRead;
+            if (!conversationSnapshot) await refreshConversation();
+            const thread = conversationSnapshot!.threads.find(thread => thread.id === body.threadId);
+            if (!thread) return json({ error: 'This thread is no longer available. Refresh the conversation.' }, 404);
+            if (resolving) await conversation.resolve(thread, body.resolved);
+            else await conversation.reply(thread, body.body);
+          }
+          // A confirmed write stays successful even if the next read fails.
+          return json({ ok: true });
+        } catch (error) { return json({ error: error instanceof ConversationError ? error.message : 'Could not confirm whether the conversation was updated. Check the original review before trying again.' }, 502); }
+        finally { conversationBusy = false; }
+      }
       if (url.pathname === '/api/context' || url.pathname === '/api/symbol') {
         if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405);
         if (!tools) return json({ error: 'Repository lookup is unavailable for this review.' }, 400);

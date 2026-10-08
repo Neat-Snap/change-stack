@@ -12,6 +12,8 @@
     "notices": "bun scripts/notices.ts",
     "test:ui": "bun scripts/smoke-ui.ts",
     "test:line-actions": "bun run styles && bun scripts/smoke-line-actions.ts",
+    "preview:conversations": "bun run styles && bun scripts/preview-conversations.ts",
+    "test:conversations": "bun run styles && bun scripts/smoke-conversations.ts",
     "styles": "tailwindcss -i src/web/styles.css -o src/web/generated.css --minify",
     "test:tls": "bun scripts/smoke-tls.ts",
     "build:release": "bun run styles && bun scripts/build-release.ts"

@@ -3,6 +3,7 @@ import { Check, ExternalLink, MessageSquarePlus, X } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { findDiffRange, originDiffUrl, type LineRange } from '../core/changes';
 import type { Review } from '../core/types';
+import { useConversation } from './conversation-state';
 
 // Wait until a selection has settled before offering actions, so reading and
 // clicking through code never flashes a popover.
@@ -13,6 +14,7 @@ export interface LineSelection extends LineRange { x: number; y: number }
 
 export function LineActions({ path, selection, close, draft }: { path: string; selection: LineSelection; close: () => void; draft: React.RefObject<boolean> }) {
   const origin = useContext(OriginContext);
+  const conversation = useConversation();
   const [composing, setComposing] = useState(false), [body, setBody] = useState('');
   const [posting, setPosting] = useState(false), [error, setError] = useState(''), [posted, setPosted] = useState<string>();
   const box = useRef<HTMLDivElement>(null);
@@ -64,6 +66,7 @@ export function LineActions({ path, selection, close, draft }: { path: string; s
       const value = await response.json();
       if (!response.ok) throw new Error(value.error ?? 'Could not post the comment.');
       setPosted(value.url); setBody(''); setComposing(false);
+      void conversation.refreshAfterWrite();
     } catch (error) { setError((error as Error).message); }
     finally { postingRef.current = false; setPosting(false); }
   }

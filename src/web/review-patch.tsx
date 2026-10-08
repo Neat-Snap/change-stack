@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LineActions, LINE_ACTIONS_DELAY_MS, type LineSelection } from './line-actions';
+import { useConversation } from './conversation-state';
+import { ThreadCard } from './conversation';
+import { findDiffLine } from '../core/changes';
 import { SplitDivider } from './split-divider';
 import { PatchDiff } from '@pierre/diffs/react';
 import type { SelectedLineRange } from '@pierre/diffs';
 import type { ReviewTheme } from './themes';
 import type { PartAnchor } from '../core/changes';
-import type { LayerPart } from '../core/types';
+import type { ChangedFile, LayerPart, ReviewThread } from '../core/types';
 
 export async function readApi<T>(endpoint: string, body: unknown): Promise<T> {
   const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -38,6 +41,22 @@ export function ReviewPatch(props: ReviewPatchProps) {
   return <ReviewPatchContent key={props.path} {...props} />;
 }
 function ReviewPatchContent({ patch, path, theme, layout, lookup, target, splitRatio, onSplitRatioChange, notes }: ReviewPatchProps) {
+  const conversation = useConversation();
+  const annotations = useMemo(() => {
+    const entries = new Map<string, { side: 'additions' | 'deletions'; lineNumber: number; metadata: { parts: number[]; threads: ReviewThread[] } }>();
+    function at(side: 'additions' | 'deletions', lineNumber: number) {
+      const key = `${side}:${lineNumber}`;
+      if (!entries.has(key)) entries.set(key, { side, lineNumber, metadata: { parts: [], threads: [] } });
+      return entries.get(key)!.metadata;
+    }
+    for (const anchor of notes?.anchors ?? []) at(anchor.side, anchor.lineNumber).parts.push(anchor.part);
+    for (const thread of conversation.conversation?.threads ?? []) {
+      const position = thread.position;
+      if (!position || position.path !== path || thread.outdated || !findDiffLine({ patch } as ChangedFile, position.line, position.side)) continue;
+      at(position.side === 'old' ? 'deletions' : 'additions', position.line).threads.push(thread);
+    }
+    return [...entries.values()];
+  }, [conversation.conversation, patch, path, notes]);
   const lookupRef = useRef(lookup); lookupRef.current = lookup;
   const [selection, setSelection] = useState<LineSelection>();
   const wrapper = useRef<HTMLDivElement>(null), pointer = useRef({ x: 0, y: 0, at: 0 }), timer = useRef<ReturnType<typeof setTimeout>>(undefined), draft = useRef(false);
@@ -61,8 +80,11 @@ function ReviewPatchContent({ patch, path, theme, layout, lookup, target, splitR
   });
   // Resizing changes inherited CSS only; keep Pierre's rendered patch stable.
   const diff = useMemo(() => (
-    <PatchDiff patch={patch} lineAnnotations={notes?.anchors.map(({ part, side, lineNumber }) => ({ side, lineNumber, metadata: part }))}
-      renderAnnotation={annotation => <PartNote index={annotation.metadata} part={notes!.parts[annotation.metadata]!} />} selectedLines={target?.path === path ? { start: target.line, end: target.line, side: target.side === 'old' ? 'deletions' : 'additions' } : undefined}
+    <PatchDiff patch={patch} lineAnnotations={annotations}
+      renderAnnotation={annotation => <div onPointerUp={event => event.stopPropagation()}>
+        {annotation.metadata.parts.map(index => <PartNote key={index} index={index} part={notes!.parts[index]!} />)}
+        {annotation.metadata.threads.map(thread => <ThreadCard key={thread.id} thread={thread} inline />)}
+      </div>} selectedLines={target?.path === path ? { start: target.line, end: target.line, side: target.side === 'old' ? 'deletions' : 'additions' } : undefined}
       options={{ theme, themeType: theme.endsWith('dark') ? 'dark' : 'light', diffStyle: layout, preferredHighlighter: 'shiki-js',
         enableLineSelection: true, disableFileHeader: true, hunkSeparators: 'line-info-basic', unsafeCSS: separatorCSS, useTokenTransformer: true,
         onLineSelected: range => selected.current(range),
@@ -70,7 +92,7 @@ function ReviewPatchContent({ patch, path, theme, layout, lookup, target, splitR
           if (event.altKey) { event.preventDefault(); const symbol = token.tokenText.trim(); if (/^[A-Za-z_$][\w$]{1,79}$/.test(symbol)) lookupRef.current(symbol, path); }
         },
       }} />
-  ), [patch, target, path, theme, layout, notes]);
+  ), [patch, target, path, theme, layout, notes, annotations]);
   return <div ref={wrapper} className="relative" data-testid="patch-pane" onPointerUp={event => {
     const rect = wrapper.current!.getBoundingClientRect();
     pointer.current = { x: Math.max(8, Math.min(event.clientX - rect.left - 12, rect.width - 240)), y: event.clientY - rect.top + 14, at: Date.now() };

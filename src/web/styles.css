@@ -178,3 +178,8 @@
   width: 3px;
   background: var(--ring);
 }
+
+.thread-markdown .summary-markdown { font-size: 12px; line-height: 1.65; color: var(--foreground); overflow-wrap: anywhere; }
+.thread-markdown .summary-markdown p, .thread-markdown .summary-markdown pre { margin-block: 0.5rem; }
+.thread-markdown .summary-markdown pre { max-width: 100%; font-size: 11px; padding: 0.625rem; }
+.thread-markdown .summary-markdown h1, .thread-markdown .summary-markdown h2, .thread-markdown .summary-markdown h3 { font-size: 12px; }

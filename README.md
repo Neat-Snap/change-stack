@@ -13,6 +13,7 @@
 - **Whole-file panel** – when a layer shows part of a file, open the full diff in a resizable side panel.
 - **Reading tools** – split/unified diffs, search (`⌘/Ctrl K`), keyboard navigation, nearby context, symbol lookup, reviewed-file progress, four GitHub/GitLab themes.
 - **Original diff and comments** – select a line or range by its line number; after a short pause, open it in GitHub/GitLab or write an inline comment.
+- **Review conversations** – open threads appear in the diff, resolved threads collapse, and you can reply, resolve, or reopen them. The sidebar’s Conversation view includes general discussions and earlier threads, with manual refresh and automatic refresh every five minutes.
 
 ## Install
 
@@ -48,6 +49,8 @@ To comment, click a line number or drag across a range, wait for the actions, an
 
 Comments work in split/unified views, logical layers, and the whole-file panel. The app checks for new commits or a changed base before posting; reopen the review with `cstack '<review-url>'` if it changed. Comments spanning separate diff hunks or expanded lines outside the original diff are unavailable. Demo mode offers original-diff links without posting.
 
+Select **Conversation** beside **All changes** to read the whole conversation, filter open/resolved threads, or start a general discussion. Thread replies and resolution changes are saved immediately on GitLab/GitHub using the same token. GitHub’s general discussion remains a flat list of PR comments. Refresh updates conversations without replacing your diff or reply drafts; when new commits appear, reopen the review to load their diff. Outdated threads remain available in Conversation.
+
 Settings and credentials live in `~/.change-stack/` (plaintext, mode `0600`). Delete that directory to remove them.
 
 ## Development
@@ -61,4 +64,6 @@ bun run typecheck && bun run test
 bun run build         # dist/cstack for this platform
 bun run test:tls && bun run test:ui
 bun run test:line-actions  # browser checks with local comment stubs
+bun run preview:conversations  # public PR diff, sample layers/threads; no model or token
+bun run test:conversations     # browser checks with simulated conversation APIs
 ```

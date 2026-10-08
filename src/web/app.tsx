@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Virtualizer } from '@pierre/diffs/react';
 import { FileTree, useFileTree } from '@pierre/trees/react';
-import { Check, ChevronLeft, ChevronRight, Columns2, Rows2, Sun, Moon, Files, TriangleAlert, Search, Keyboard, ExternalLink, GitBranch, MessageSquareText, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Columns2, Rows2, Sun, Moon, Files, TriangleAlert, Search, Keyboard, ExternalLink, GitBranch, MessageSquareText, MessageSquare, RefreshCw, X } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { themes, type ReviewTheme } from './themes';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -21,10 +21,12 @@ import { ReviewSearch, type SearchResult } from './review-search';
 import { ReviewPatch, readApi, patchLineOffset, type LineTarget } from './review-patch';
 import { FileSection, Counts } from './file-section';
 import { OriginContext } from './line-actions';
+import { ConversationProvider, useConversation } from './conversation-state';
+import { ConversationView } from './conversation';
 import { ReviewIntro, NextLayer, reviewRef, type LayerStat } from './review-intro';
 import { CodePeek, type PeekState } from './code-peek';
 import type { SymbolResult } from '../core/review-tools';
-import { layerFile, partAnchors } from '../core/changes';
+import { findDiffLine, layerFile, partAnchors } from '../core/changes';
 import { CategoryPill, LayerMap } from './layer-map';
 import { Shortcuts } from './shortcuts';
 import type { ChangedFile, Session } from '../core/types';
@@ -64,6 +66,9 @@ function Tree({ files, select }: { files: ChangedFile[]; select: (path: string) 
 
 function ReviewWorkspace({ session }: { session: Session }) {
   const { review } = session;
+  const conversation = useConversation();
+  const [conversationOpen, setConversationOpen] = useState(false);
+  const openThreads = conversation.conversation?.threads.filter(thread => thread.kind === 'diff' && !thread.resolved).length ?? 0;
   const origin = useMemo(() => ({ review, commentsEnabled: !!session.commentsEnabled }), [review, session.commentsEnabled]);
   // Groups are only meaningful when they partition the layers exactly.
   const analysis = useMemo(() => {
@@ -108,11 +113,13 @@ function ReviewWorkspace({ session }: { session: Session }) {
   useEffect(() => { document.title = `${review.target.project} #${review.target.number}`; }, [review]);
 
   function chooseLayer(id: string) {
+    setConversationOpen(false);
     setActiveLayer(id);
     requestAnimationFrame(() => summary.current?.scrollIntoView({ block: 'start' }));
     if (isMobile) setOpenMobile(false);
   }
   function chooseFile(path: string) {
+    setConversationOpen(false);
     pendingJump.current = { path };
     performJump();
     if (isMobile) setOpenMobile(false);
@@ -146,6 +153,7 @@ function ReviewWorkspace({ session }: { session: Session }) {
   }
   useEffect(() => { if (pendingJump.current) performJump(); }, [activeLayer, collapsed]);
   function jumpAnywhere(path: string, line?: number, side: 'old' | 'current' = 'current') {
+    setConversationOpen(false);
     setActiveLayer('all');
     setFileCollapsed(path, false);
     pendingJump.current = { path, line, side };
@@ -194,10 +202,10 @@ function ReviewWorkspace({ session }: { session: Session }) {
       else if (event.key === 'g' && analysis.layers.length > 1) { event.preventDefault(); toggleMap(); }
       else if (event.key === 'n') { event.preventDefault(); setNotesVisible(value => !value); }
       else if (event.key === 'o') { event.preventDefault(); openOrigin(); }
-      else if (event.key === 'Escape' && (mapOpen || panel)) { event.preventDefault(); if (mapOpen) setMapOpen(false); else setPanel(undefined); }
+      else if (event.key === 'Escape' && (mapOpen || panel || conversationOpen)) { event.preventDefault(); if (mapOpen) setMapOpen(false); else if (conversationOpen) setConversationOpen(false); else setPanel(undefined); }
     };
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
-  }, [files, activeLayerIndex, searchOpen, peek, shortcutsOpen, isMobile, open, openMobile, panel, mapOpen]);
+  }, [files, activeLayerIndex, searchOpen, peek, shortcutsOpen, isMobile, open, openMobile, panel, mapOpen, conversationOpen]);
 
   function setFileCollapsed(path: string, value: boolean) {
     setCollapsed(previous => { const next = new Set(previous); if (value) next.add(path); else next.delete(path); return next; });
@@ -230,11 +238,20 @@ function ReviewWorkspace({ session }: { session: Session }) {
             <GitBranch className="size-3 shrink-0" aria-hidden /><span className="truncate">{review.sourceBranch}</span><span className="shrink-0">→ {review.targetBranch}</span>
           </p>
         </div>
-        <button onClick={() => chooseLayer('all')} data-active={activeLayer === 'all'}
+        <button onClick={() => chooseLayer('all')} data-active={activeLayer === 'all' && !conversationOpen}
           className="flex h-8 w-full items-center gap-2 border-t px-4 text-left text-foreground hover:bg-sidebar-accent data-[active=true]:bg-sidebar-accent">
           <Files className="size-3.5 text-muted-foreground" /><span className="text-[13px] font-medium">All changes</span>
           <span className="text-[11px] tabular-nums text-muted-foreground">{review.files.length}</span>
         </button>
+        {conversation.enabled && <div className="flex h-9 items-center px-1" data-testid="conversation-navigation">
+          <button onClick={() => { setConversationOpen(true); setMapOpen(false); if (isMobile) setOpenMobile(false); }} data-active={conversationOpen}
+            className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-sm px-3 text-left text-foreground hover:bg-sidebar-accent data-[active=true]:bg-sidebar-accent">
+            <MessageSquare className="size-3.5 text-muted-foreground" /><span className="text-[13px] font-medium">Conversation</span>
+            {!!openThreads && <span className="ml-auto rounded-full bg-blue-500/10 px-1.5 py-0.5 text-[10px] tabular-nums text-blue-600 dark:text-blue-400" title={`${openThreads} open threads`}>{openThreads}</span>}
+          </button>
+          <Button variant="ghost" size="icon" className={`size-7 ${conversation.error ? 'text-destructive' : 'text-muted-foreground'}`} aria-label="Refresh conversation" title={conversation.error || 'Refresh conversation · automatically every 5 minutes'} disabled={conversation.loading} onClick={() => void conversation.refresh()}>
+            <RefreshCw className={`size-3 ${conversation.loading ? 'animate-spin' : ''}`} /></Button>
+        </div>}
       </SidebarHeader>
       <SidebarContent className="gap-0 overflow-hidden!">
         <Collapsible open={layersOpen} onOpenChange={setLayersOpen}
@@ -348,6 +365,13 @@ function ReviewWorkspace({ session }: { session: Session }) {
           <ReviewPatch patch={review.files.find(f => f.path === panel)!.patch} path={panel} theme={theme} layout="unified" lookup={(symbol, path) => void lookupSymbol(symbol, path)} />
         </Virtualizer>
       </SidePanel>}
+      {conversationOpen && <ConversationView close={() => setConversationOpen(false)} service={review.target.provider === 'gitlab' ? 'GitLab' : 'GitHub'} canJump={thread => {
+        const position = thread.position, file = review.files.find(file => file.path === position?.path);
+        return !!(position && file && findDiffLine(file, position.line, position.side));
+      }} jump={thread => {
+        const position = thread.position;
+        if (position) jumpAnywhere(position.path, position.line, position.side);
+      }} />}
       </div>
       {mapOpen && <section className="absolute inset-0 z-40 flex flex-col bg-background" aria-label="Layer map" data-testid="map-overlay">
         <div className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
@@ -430,7 +454,7 @@ function App() {
     <Skeleton className="h-8 w-full" /><Skeleton className="h-10 w-full" /><Skeleton className="h-10 w-full" /></div>
     <div className="flex-1 space-y-4 p-5"><Skeleton className="h-7 w-48" /><Skeleton className="h-72 w-full" /></div></div>;
   return <SidebarProvider className="h-svh min-h-0" style={{ '--sidebar-width': '15rem' } as React.CSSProperties}>
-    <ReviewWorkspace session={session} />
+    <ConversationProvider enabled={!!session.conversationsEnabled}><ReviewWorkspace session={session} /></ConversationProvider>
   </SidebarProvider>;
 }
 createRoot(document.getElementById('root')!).render(<App />);

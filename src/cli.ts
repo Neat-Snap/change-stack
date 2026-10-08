@@ -16,6 +16,7 @@ import { configureDiagnostics, diagnose, diagnosticReason, ModelError } from './
 import { discoverModelSettings, readModelSettings, type ModelSettings } from './core/model-settings';
 import { demoSession } from './core/demo';
 import { startServer } from './server';
+import { conversationService, type ConversationService } from './core/conversations';
 import type { AIConfig, Config, HostConfig, Provider, ReviewTarget } from './core/types';
 
 function answer<T>(value: T): Exclude<T, symbol> {
@@ -43,8 +44,9 @@ async function setupHost(config: Config, target: ReviewTarget, noOpen: boolean):
     try {
       await validateHost(host); spinner.stop('Credentials verified');
       config.hosts[target.origin] = host; await saveConfig(config); return host;
-    } catch {
+    } catch (error) {
       spinner.stop('Could not verify credentials');
+      p.log.error(diagnosticReason(error));
       const retry = answer(await p.confirm({ message: 'Check the URL and token permissions. Try another token?' }));
       if (!retry) throw new Error('Git authentication was not completed.');
     }
@@ -177,6 +179,7 @@ async function main() {
   let ai: AIConfig | undefined;
   let tools: ReviewTools | undefined;
   let comment: Parameters<typeof startServer>[6];
+  let conversation: ConversationService | undefined;
   if (values.demo) session = demoSession();
   else {
     let url = positionals[0];
@@ -217,9 +220,10 @@ async function main() {
     }
     tools = reviewTools(review, host);
     comment = input => postComment(review, host, input);
-    session = { review, analysis, aiEnabled: !!ai, demo: false, commentsEnabled: true };
+    conversation = conversationService(review, host);
+    session = { review, analysis, aiEnabled: !!ai, demo: false, commentsEnabled: true, conversationsEnabled: true };
   }
-  const { server, url } = startServer(session, ai, port, values['public-url'], listen, tools, comment);
+  const { server, url } = startServer(session, ai, port, values['public-url'], listen, tools, comment, conversation);
   p.outro(`Review ready: ${url}\nKeep this terminal running. Press Ctrl+C to close the review.`);
   if (!values['no-open']) void openBrowser(url);
   for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => { server.stop(true); process.exit(0); });

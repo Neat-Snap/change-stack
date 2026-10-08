@@ -71,6 +71,23 @@ export interface Layer {
 }
 export interface LayerGroup { id: string; title: string; layers: string[] }
 export interface Analysis { summary: string; layers: Layer[]; groups?: LayerGroup[]; source: 'model' | 'local'; warnings: string[] }
-export interface Session { review: Review; analysis: Analysis; aiEnabled: boolean; demo: boolean; commentsEnabled?: boolean }
+export interface Session { review: Review; analysis: Analysis; aiEnabled: boolean; demo: boolean; commentsEnabled?: boolean; conversationsEnabled?: boolean }
 export type LineSide = 'old' | 'current';
 export interface CommentInput { path: string; side: LineSide; start: number; end: number; endSide?: LineSide; body: string }
+export interface ThreadComment { id: string; author: string; body: string; createdAt: string; url: string }
+export interface ReviewThread {
+  id: string;
+  kind: 'diff' | 'discussion' | 'review';
+  comments: ThreadComment[];
+  resolved: boolean;
+  resolvable: boolean;
+  canResolve: boolean;
+  canReply: boolean;
+  resolvedBy?: string;
+  outdated?: boolean;
+  position?: { path: string; line: number; side: LineSide; startLine?: number; startSide?: LineSide };
+  replyId?: number;
+  individual?: boolean;
+  reviewState?: string;
+}
+export interface Conversation { threads: ReviewThread[]; fetchedAt: string; reviewChanged: boolean }
