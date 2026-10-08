@@ -23,6 +23,13 @@ jobs:
       - run: bunx playwright install chromium
       - run: bun run test:ui
       - run: bun run test:line-actions
+      - name: Check review conversations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/sindresorhus/p-limit/pulls/109 > dist/public-review.json
+          gh api repos/sindresorhus/p-limit/pulls/109/files > dist/public-review-files.json
+          bun run test:conversations
       - run: bun run build:release
         env:
           CHANGE_STACK_RELEASE_VERSION: ${{ github.ref_name }}

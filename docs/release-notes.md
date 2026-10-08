@@ -1,17 +1,19 @@
-# Change Stack v0.1.4
+# Change Stack v0.1.5
 
-Change Stack now focuses on the local browser review experience.
+Review conversations now live alongside the code in your browser.
 
-- Post inline Markdown comments to GitLab merge requests and GitHub pull requests with the same token used to load the review. Select a line or range, choose **Comment**, then **Post to GitLab/GitHub** or **⌘/Ctrl+Enter**. Posting is immediate under your account.
-- Comment from split/unified diffs, logical layers, and the whole-file panel. Posting errors preserve your draft; successful posts link to the original discussion.
-- Setup now preselects GitLab’s `api` scope or GitHub’s **Contents: Read-only** and **Pull requests: Read and write**, including the GitHub repository owner.
-- Existing users can run `cstack '<review-url>' --setup-git` to upgrade a read-only token without reconfiguring their model. Existing tokens are not automatically upgraded. GitHub organization approval may be required; fork source repositories need read access.
-- Before posting, verify that the review’s head and base still match the displayed snapshot. If they changed, reopen the review before sending the comment.
-- Improve original-diff links, line-range actions, complete diff recovery, and the commenting keyboard guidance.
-- Remove the entire IDE addon, analyzer protocol, JSON export, build scripts, tests, and installation docs. `--ide-request` and `--export-ide` are removed. Existing IDE installations must be uninstalled manually.
+- Show GitLab and GitHub review threads directly in split/unified diffs, logical layers, and the whole-file panel. Open threads expand; resolved threads start collapsed.
+- Reply, resolve, and reopen threads using your saved Git token. New inline comments immediately appear as threads. Posting failures preserve your draft.
+- Open **Conversation** beside **All changes** for the full discussion, open/resolved filters, general review comments, and new discussions. Long comments and earlier replies expand on demand.
+- Above each diff thread in Conversation, show a code excerpt with the commented lines highlighted. Jump to the full diff or a relevant layer; layer links follow the actual code ranges.
+- Keep outdated threads in Conversation. Show their historical code context when supplied by GitHub, otherwise link to the original review.
+- Refresh conversations every five minutes while the page is visible, when returning to the page, or with the refresh button. Keep reply drafts and previously loaded comments if a refresh fails.
+- Print the underlying diagnostic when Git credential verification fails.
 
-Comments must stay within one original diff hunk. Expanded context outside the service’s diff is not commentable. Drafts are held only in the current page. Demo mode never posts comments.
+Conversation refresh preserves the reviewed diff snapshot. If new commits or a changed base appear, reopen the review to load their diff. Replies and resolution changes are published immediately under your account. GitHub general discussions retain GitHub’s flat PR-comment format. Drafts are held only in the current page.
+
+Token permissions are unchanged from v0.1.4: GitLab’s `api` scope, or GitHub **Contents: Read-only** and **Pull requests: Read and write**. Repository permissions still determine which threads you can resolve or reopen.
 
 The standalone download is for **macOS Apple Silicon (arm64)** and includes the binary, English/Russian instructions, and license notices. No Bun or Node.js is required. Verify the archive using `SHA256SUMS`. The binary is unsigned and not notarized.
 
-A Linux amd64 container is published as `ghcr.io/neat-snap/change-stack:v0.1.4`. Access follows the package’s visibility settings.
+A Linux amd64 container is published as `ghcr.io/neat-snap/change-stack:v0.1.5`. Access follows the package’s visibility settings.
