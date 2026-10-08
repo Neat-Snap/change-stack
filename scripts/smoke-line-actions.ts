@@ -70,6 +70,14 @@ try {
       await expect(page.getByRole('alert')).toHaveText('Prototype rejection');
       await expect(page.getByRole('textbox', { name: 'Comment', exact: true })).toHaveValue('reject');
       await page.getByRole('textbox', { name: 'Comment', exact: true }).fill('Looks good');
+      // An open draft must stay usable when the viewport shrinks.
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect.poll(async () => {
+        const bounds = (await page.getByTestId('line-actions').boundingBox())!;
+        return bounds.x >= 0 && bounds.x + bounds.width <= 390;
+      }).toBe(true);
+      await expect(page.getByRole('textbox', { name: 'Comment', exact: true })).toHaveValue('Looks good');
+      await page.setViewportSize({ width: 1440, height: 900 });
       await page.screenshot({ path: `dist/line-comment-${provider}.png` });
       await page.getByRole('textbox', { name: 'Comment', exact: true }).press('Control+Enter');
       await page.keyboard.press('Escape');

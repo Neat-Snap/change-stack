@@ -22,8 +22,13 @@ export function LineActions({ path, selection, close, draft }: { path: string; s
   useLayoutEffect(() => {
     const element = box.current;
     if (!element?.parentElement) return;
-    element.style.left = `${Math.max(8, Math.min(selection.x, element.parentElement.clientWidth - element.offsetWidth - 8))}px`;
+    const parent = element.parentElement;
+    const place = () => { element.style.left = `${Math.max(8, Math.min(selection.x, parent.clientWidth - element.offsetWidth - 8))}px`; };
+    place();
     element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const observer = new ResizeObserver(place);
+    observer.observe(parent); observer.observe(element);
+    return () => observer.disconnect();
   }, [composing, selection]);
   useEffect(() => {
     // Leave a half-written comment open; otherwise any outside click dismisses.
@@ -82,7 +87,7 @@ export function LineActions({ path, selection, close, draft }: { path: string; s
         onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && body.trim() && !posting) { event.preventDefault(); void submit(); } }}
         className="min-h-20 w-full resize-y rounded-sm border bg-background px-2 py-1.5 text-xs leading-5 outline-none focus-visible:ring-1 focus-visible:ring-ring" />
       {error && <p role="alert" className="text-destructive">{error}</p>}
-      <div className="flex items-center justify-between gap-2"><span className="text-[11px] text-muted-foreground">Posts to review as you · Ctrl+Enter</span>
+      <div className="flex items-center justify-between gap-2"><span className="text-[11px] text-muted-foreground">Posts immediately as you · ⌘/Ctrl+Enter</span>
         <Button type="submit" size="sm" className="h-7 text-xs" disabled={!body.trim() || posting}>{posting ? 'Posting…' : `Post to ${service}`}</Button></div>
     </form>}
   </div>;

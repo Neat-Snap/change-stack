@@ -1,6 +1,6 @@
 {
   "name": "change-stack-local",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,8 +14,7 @@
     "test:line-actions": "bun run styles && bun scripts/smoke-line-actions.ts",
     "styles": "tailwindcss -i src/web/styles.css -o src/web/generated.css --minify",
     "test:tls": "bun scripts/smoke-tls.ts",
-    "build:release": "bun run styles && bun scripts/build-release.ts",
-    "build:ide-preview": "bun scripts/build-ide-preview.ts"
+    "build:release": "bun run styles && bun scripts/build-release.ts"
   },
   "dependencies": {
     "@clack/prompts": "latest",

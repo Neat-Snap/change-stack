@@ -54,6 +54,7 @@ export interface Review {
   sourceBranch: string;
   targetBranch: string;
   headSha: string;
+  targetSha?: string;
   repository?: string;
   baseSha?: string;
   startSha?: string;

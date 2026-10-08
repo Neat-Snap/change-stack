@@ -34,6 +34,16 @@ describe('URL routing and authentication', () => {
     expect(() => parseTarget('https://git.company/a/b/-/merge_requests/1', 'github')).toThrow();
     expect(() => parseTarget('https://git.company/a/b/-/merge_requests/0')).toThrow();
   });
+  test('prefills one token for reading reviews and posting comments', () => {
+    const gitlab = new URL(tokenCreationUrl('gitlab', 'https://git.company/gitlab', 'team/project'));
+    expect(gitlab.pathname).toBe('/gitlab/-/user_settings/personal_access_tokens');
+    expect(gitlab.searchParams.get('scopes')).toBe('api');
+    const github = new URL(tokenCreationUrl('github', 'https://github.com', 'my-team/repo'));
+    expect(github.searchParams.get('contents')).toBe('read');
+    expect(github.searchParams.get('pull_requests')).toBe('write');
+    expect(github.searchParams.get('target_name')).toBe('my-team');
+    expect(new URL(tokenCreationUrl('github', 'https://github.company')).origin).toBe('https://github.company');
+  });
   test('saves only credentials, with restricted file permissions', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'change-stack-config-'));
     try {

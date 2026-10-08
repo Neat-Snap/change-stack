@@ -1,6 +1,6 @@
 # CodeRabbit Change Stack feature comparison
 
-Updated after implementing local search, keyboard navigation, range-based layers, context expansion, bounded symbol lookup, layer categories, groups and dependencies, part notes, and side panels. Saved progress, freshness checks, and provider comments remain deferred.
+Updated after implementing local search, keyboard navigation, range-based layers, context expansion, bounded symbol lookup, layer categories, groups and dependencies, part notes, side panels, and inline GitLab/GitHub comments with checks before posting. Saved progress and in-page refresh remain deferred.
 
 Checked against the official Change Stack documentation on 2026-09-30 and our current source. This inventories the documented review workspace, including its integration entry points; it does not claim to inventory the entire CodeRabbit platform. Provider and plan restrictions apply to CodeRabbit features. Recommendations below are our judgment, not claims from CodeRabbit.
 
@@ -79,8 +79,8 @@ Source: [Review and merge](https://docs.coderabbit.ai/change-stack/reviewing).
 
 | Feature | Our version |
 | --- | --- |
-| Line/range selection and comment composer | Partial: Pierre line selection enabled; no composer or provider write. |
-| File comments; edit/discard draft comments | Missing. |
+| Line/range selection and comment composer | Implemented: line/range selection, Markdown composer, immediate GitLab/GitHub posting with the saved user token. |
+| File comments; edit/discard draft comments | Partial: inline drafts can be edited/discarded; file-level comments are missing. |
 | Reply, resolve, reopen threads | Missing: existing provider comments are not fetched. |
 | Image attachment to comments | Missing. |
 | Submit approval/comment/request changes | Missing. |
@@ -89,9 +89,9 @@ Source: [Review and merge](https://docs.coderabbit.ai/change-stack/reviewing).
 | Direct merge/merge queue | Missing. |
 | Coding Agent task from a finding | Missing. |
 | Request CI/conflict repair | Missing. |
-| Guard writes against changed head/base | Missing write workflow; fetching already rejects a head that changes during preparation. |
+| Guard writes against changed head/base | Implemented: verify head/base before posting; fetching also rejects changes during preparation. |
 
-CodeRabbit writes under the reviewer's provider identity. Draft storage differs by provider, and CodeRabbit-held GitLab/Bitbucket drafts expire. Suggestion commits work on GitHub/GitLab; direct merge and queue controls are GitHub-only. Task offers depend on plan, write access, connection, and freshness. Our current credential flow and provider adapters are read-only.
+CodeRabbit writes under the reviewer's provider identity. Draft storage differs by provider, and CodeRabbit-held GitLab/Bitbucket drafts expire. Suggestion commits work on GitHub/GitLab; direct merge and queue controls are GitHub-only. Task offers depend on plan, write access, connection, and freshness. Our setup requests GitLab `api` or GitHub Contents read/Pull requests write permissions; comments post under the token owner’s identity.
 
 ## Snapshots and retention
 
@@ -157,7 +157,7 @@ CodeRabbit's Azure artifacts are read-only. CodeRabbit's public anonymous sharin
 2. **Implemented: range-based layers.** Extend model output with validated hunk/line references, permit one file to contribute to several layers, and reconcile batches into a global reading order. Preserve All changes as the complete diff. This addresses the main structural gap.
 3. **Implemented: context expansion and Code Peek.** Load old/current content from approved provider origins at pinned commits. Start with bounded text lookup and a clear incomplete-results state; add language-aware indexing only if needed.
 4. **Deferred by user: freshness and resumable review.** Compare head on demand; associate reviewed state with host/project/PR/head. Offer opt-in storage with retention and deletion controls rather than silently caching code.
-5. **Deferred by user: provider comments and review submission.** Read threads first, then draft/reply/submit with explicit write setup and stale-head checks. This is the most useful collaboration addition for teammates reviewing each other's code.
+5. **Extend provider review actions.** Inline comments now post with explicit token permissions and checks before writing. Reading/replying to existing threads and submitting approvals or requests for changes remain future work.
 6. **Small, evidence-linked findings.** Deferred by user. Add severity only with a validated code anchor and concise explanation. Avoid a large dashboard or a speculative merge-readiness score.
 7. **Optional diagrams and rich file diffs.** Generate diagrams only when they clarify a flow; image/Markdown comparison is worthwhile for repositories that change those assets often.
 

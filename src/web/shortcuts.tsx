@@ -13,6 +13,8 @@ const shortcuts = [
   ['↑ / ↓ · Enter', 'Select and open a search result'],
   ['Esc', 'Close a dialog or side panel'],
   ['Alt + click a code token', 'Look up a symbol'],
+  ['Click or drag line numbers', 'Open the original diff or write a comment'],
+  ['⌘ / Ctrl Enter in a comment', 'Post the comment to GitLab / GitHub'],
   ['← / → on the divider', 'Resize split diff (Shift for larger steps)'],
   ['Home / End on the divider', 'Set old code width to 20% / 80%'],
   ['Double-click divider · Enter', 'Reset split diff to equal widths'],

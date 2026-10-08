@@ -22,6 +22,7 @@ jobs:
       - run: bun run test:tls
       - run: bunx playwright install chromium
       - run: bun run test:ui
+      - run: bun run test:line-actions
       - run: bun run build:release
         env:
           CHANGE_STACK_RELEASE_VERSION: ${{ github.ref_name }}

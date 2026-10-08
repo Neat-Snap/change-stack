@@ -35,15 +35,22 @@ cstack --demo                           # sample review, no network access
 cstack --help                           # all options
 ```
 
-On first run, the CLI asks for a read-only Git token and your model's base URL, model ID, and API key. Keep the terminal open while reviewing; `Ctrl+C` stops the local server.
+On first run, the CLI asks for a Git token that can read reviews and post comments and your model's base URL, model ID, and API key. Keep the terminal open while reviewing; `Ctrl+C` stops the local server.
 
-Posting comments requires a GitLab token with the `api` scope or a GitHub fine-grained token with **Pull requests: Read and write** for the repository. Run `cstack --setup` to replace a read-only token. Comments are sent to the original review under your account when you click **Post**; demo mode only offers original-diff links. Comments spanning separate diff hunks or expanded lines outside the original diff are unavailable.
+Use the same token for reading and commenting:
+
+- **GitLab:** choose the `api` scope. The setup link preselects it. GitLab does not offer a comment-only token scope; `api` grants API access within your account's existing permissions.
+- **GitHub:** create a fine-grained token with **Contents: Read-only** and **Pull requests: Read and write**. The setup link preselects these permissions and the repository owner. Select the repositories you review; organization approval may be required. Fork reviews also need read access to the source repository.
+
+If you already saved a read-only token, run `cstack '<review-url>' --setup-git` to replace just the Git token while keeping your model settings. You can also edit an existing GitHub token's permissions on GitHub.
+
+To comment, click a line number or drag across a range, wait for the actions, and choose **Comment**. Write Markdown, then click **Post to GitLab/GitHub** or press **⌘/Ctrl+Enter**. This publishes immediately under your account using your saved token. The link **Posted · view** opens the posted comment. Posting errors preserve your text. Drafts live only in the current page and are not saved after closing it.
+
+Comments work in split/unified views, logical layers, and the whole-file panel. The app checks for new commits or a changed base before posting; reopen the review with `cstack '<review-url>'` if it changed. Comments spanning separate diff hunks or expanded lines outside the original diff are unavailable. Demo mode offers original-diff links without posting.
 
 Settings and credentials live in `~/.change-stack/` (plaintext, mode `0600`). Delete that directory to remove them.
 
 ## Development
-
-An installable addon to IntelliJ's native GitLab review UI is in [`ide-plugin/`](ide-plugin/README.md). It analyzes the selected MR using IDEA's GitLab account and a bundled analyzer, then adds native semantic grouping and explanations. See the [full laptop installation guide](docs/intellij-gitlab-install.md). The CLI's `--export-ide` option remains available for analysis snapshots.
 
 Requires Bun 1.3.14.
 

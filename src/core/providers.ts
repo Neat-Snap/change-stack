@@ -82,7 +82,7 @@ export async function fetchReview(target: ReviewTarget, host: HostConfig, onProg
     diffBaseSha = comparison.merge_base_commit?.sha;
   } catch { /* Completeness verification below reports an unavailable comparison base. */ }
   const review: Review = { target, title: pr.title, description: pr.body ?? '', author: pr.user.login,
-    sourceBranch: pr.head.ref, targetBranch: pr.base.ref, headSha: pr.head.sha, baseSha: diffBaseSha, baseRepository: pr.base.repo?.full_name ?? target.project, repository: pr.head.repo?.full_name ?? target.project, files, warnings };
+    sourceBranch: pr.head.ref, targetBranch: pr.base.ref, headSha: pr.head.sha, targetSha: pr.base.sha, baseSha: diffBaseSha, baseRepository: pr.base.repo?.full_name ?? target.project, repository: pr.head.repo?.full_name ?? target.project, files, warnings };
   await recoverFileList(review, host, onProgress, pr.changed_files);
   await recoverTextDiffs(review, host, onProgress);
   const current = await get<any>(path);
@@ -93,6 +93,8 @@ export async function fetchReview(target: ReviewTarget, host: HostConfig, onProg
 export class CommentError extends Error {}
 // Posts an inline comment on the service's own diff, anchored like a comment written there.
 export async function postComment(review: Review, host: HostConfig, input: CommentInput): Promise<{ url: string }> {
+  if (new URL(host.baseUrl).origin !== review.target.origin || host.provider !== review.target.provider) throw new CommentError('Credentials do not match this review host.');
+  if (!input.body.trim() || input.body.length > 20_000) throw new CommentError('Write a comment of up to 20,000 characters.');
   const file = review.files.find(f => f.path === input.path);
   if (!file) throw new CommentError('Unknown changed file.');
   const located = findDiffRange(file, input);
@@ -103,12 +105,21 @@ export async function postComment(review: Review, host: HostConfig, input: Comme
   const post = <T>(path: string, body: unknown) => serviceJson<T>(`${api}${path}`, new URL(api).origin,
     { method: 'POST', headers: { ...headers(host), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   try {
+    // Verify the snapshot before any write. The provider also validates the pinned position.
+    const projectPath = target.provider === 'github' ? target.project.split('/').map(encodeURIComponent).join('/') : encodeURIComponent(gitlabProject(target, host));
+    const reviewPath = target.provider === 'github' ? `/repos/${projectPath}/pulls/${target.number}` : `/projects/${projectPath}/merge_requests/${target.number}`;
+    const current = await serviceJson<any>(`${api}${reviewPath}`, new URL(api).origin, { headers: headers(host) });
+    const changed = target.provider === 'github'
+      ? current.head?.sha !== review.headSha || (!!review.targetSha && current.base?.sha !== review.targetSha)
+      : current.diff_refs?.head_sha !== review.headSha || current.diff_refs?.base_sha !== review.baseSha || current.diff_refs?.start_sha !== (review.startSha ?? review.baseSha);
+    if (changed) throw new CommentError('This review has new commits or a changed base. Run cstack with the review URL again before posting. Your comment has not been sent.');
     if (target.provider === 'github') {
       const side = (l: DiffLine) => l.kind === '-' ? 'LEFT' : 'RIGHT', line = (l: DiffLine) => l.kind === '-' ? l.old : l.current;
       const projectPath = target.project.split('/').map(encodeURIComponent).join('/');
       const comment = await post<{ html_url: string }>(`/repos/${projectPath}/pulls/${target.number}/comments`, {
         body: input.body, commit_id: review.headSha, path: file.path, line: line(last), side: side(last),
         ...(multiline ? { start_line: line(first), start_side: side(first) } : {}) });
+      if (typeof comment.html_url !== 'string' || !comment.html_url) throw new Error('Missing posted comment URL.');
       return { url: comment.html_url };
     }
     const lines = (l: DiffLine) => ({ ...(l.kind !== '+' ? { old_line: l.old } : {}), ...(l.kind !== '-' ? { new_line: l.current } : {}) });
@@ -122,8 +133,8 @@ export async function postComment(review: Review, host: HostConfig, input: Comme
     if (!(error instanceof ServiceError)) throw error;
     const service = target.provider === 'gitlab' ? 'GitLab' : 'GitHub';
     if (error.status === 401 || error.status === 403 || error.status === 404) throw new CommentError(target.provider === 'gitlab'
-      ? 'GitLab refused the comment. If your saved token is read-only, run cstack --setup with a token that has the api scope.'
-      : 'GitHub refused the comment. If your saved token is read-only, run cstack --setup with a token that has Pull requests: Read and write.');
+      ? 'GitLab refused access. Run cstack with the review URL and --setup-git to save a token with the api scope. Your account also needs permission to comment on this project.'
+      : 'GitHub refused access. Run cstack with the review URL and --setup-git to save a token with Contents: Read-only and Pull requests: Read and write for this repository. Check organization approval and your account access.');
     if (error.status === 400 || error.status === 422) throw new CommentError(`${service} rejected the comment position. The ${target.provider === 'gitlab' ? 'merge request' : 'pull request'} may have new commits; reload the review.`);
     throw new CommentError(`${service} returned HTTP ${error.status}. Check the original diff before trying again.`);
   }

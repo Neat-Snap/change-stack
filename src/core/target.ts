@@ -27,11 +27,12 @@ export function parseTarget(value: string, provider?: Provider): ReviewTarget {
     url: `${url.origin}/${match[1]}${detected === 'gitlab' ? '/-/merge_requests/' : '/pull/'}${number}` };
 }
 
-export function tokenCreationUrl(provider: Provider, baseUrl: string): string {
+export function tokenCreationUrl(provider: Provider, baseUrl: string, project?: string): string {
   const base = serviceUrl(baseUrl).toString().replace(/\/$/, '');
-  return provider === 'gitlab'
-    ? `${base}/-/user_settings/personal_access_tokens?name=Change%20Stack%20Local&scopes=read_api`
-    : `${base}/settings/personal-access-tokens/new`;
+  if (provider === 'gitlab') return `${base}/-/user_settings/personal_access_tokens?name=Change%20Stack%20Local&scopes=api`;
+  const params = new URLSearchParams({ name: 'Change Stack Local', description: 'Read pull requests and post review comments', contents: 'read', pull_requests: 'write' });
+  if (project) params.set('target_name', project.split('/')[0]!);
+  return `${base}/settings/personal-access-tokens/new?${params}`;
 }
 
 export function gitApiBase(host: { provider: Provider; baseUrl: string }): string {

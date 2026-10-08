@@ -53,32 +53,41 @@ describe('Diff lines and origin links', () => {
 });
 
 describe('Posting comments', () => {
-  function service(status = 201) {
+  function service(status = 201, head = 'head', base = 'target', gitlabBase = 'base', start = 'start') {
     const requests: { path: string; body: any; auth: string | null }[] = [];
+    const reads: { path: string; auth: string | null }[] = [];
     const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+      if (request.method === 'GET') {
+        reads.push({ path: new URL(request.url).pathname, auth: request.headers.get('private-token') ?? request.headers.get('authorization') });
+        return Response.json({ head: { sha: head }, base: { sha: base }, diff_refs: { head_sha: head, base_sha: gitlabBase, start_sha: start } });
+      }
       requests.push({ path: new URL(request.url).pathname, body: await request.json(), auth: request.headers.get('private-token') ?? request.headers.get('authorization') });
       if (status !== 201) return Response.json({ message: 'nope' }, { status });
       return Response.json(new URL(request.url).pathname.includes('/discussions') ? { notes: [{ id: 99 }] } : { html_url: 'https://example/comment/1' }, { status });
     } });
     servers.push(server);
-    return { origin: server.url.origin, requests };
+    return { origin: server.url.origin, requests, reads };
   }
   test('anchors GitHub single and multi-line comments to diff sides', async () => {
-    const { origin, requests } = service(), host: HostConfig = { provider: 'github', baseUrl: origin, token: 't' }, pr = review('github', origin);
+    const { origin, requests, reads } = service(), host: HostConfig = { provider: 'github', baseUrl: origin, token: 't' }, pr = review('github', origin);
     expect(await postComment(pr, host, { path, side: 'old', start: 11, end: 11, body: 'why?' })).toEqual({ url: 'https://example/comment/1' });
     await postComment(pr, host, { path, side: 'current', start: 13, end: 11, body: 'range' });
     expect(requests[0]!.path).toBe('/api/v3/repos/owner/repo/pulls/7/comments');
     expect(requests[0]!.body).toEqual({ body: 'why?', commit_id: 'head', path, line: 11, side: 'LEFT' });
     expect(requests[1]!.body).toMatchObject({ line: 13, side: 'RIGHT', start_line: 11, start_side: 'RIGHT' });
+    expect(reads[0]).toEqual({ path: '/api/v3/repos/owner/repo/pulls/7', auth: 'Bearer t' });
+    expect(requests.every(request => request.auth === 'Bearer t')).toBe(true);
   });
   test('sends GitLab positions with line codes for ranges', async () => {
-    const { origin, requests } = service(), host: HostConfig = { provider: 'gitlab', baseUrl: origin, token: 't' }, mr = review('gitlab', origin);
+    const { origin, requests, reads } = service(), host: HostConfig = { provider: 'gitlab', baseUrl: origin, token: 't' }, mr = review('gitlab', origin);
     expect(await postComment(mr, host, { path, side: 'current', start: 11, end: 11, body: 'one' })).toEqual({ url: `${mr.target.url}#note_99` });
     await postComment(mr, host, { path, side: 'current', start: 11, end: 13, body: 'range' });
     expect(requests[0]!.path).toBe('/api/v4/projects/team%2Fproject/merge_requests/7/discussions');
     expect(requests[0]!.body.position).toEqual({ position_type: 'text', base_sha: 'base', start_sha: 'start', head_sha: 'head', old_path: path, new_path: path, new_line: 11 });
     expect(requests[1]!.body.position).toMatchObject({ old_line: 12, new_line: 13, line_range: {
       start: { line_code: `${sha1}_12_11`, type: 'new', new_line: 11 }, end: { line_code: `${sha1}_12_13`, type: 'old', old_line: 12, new_line: 13 } } });
+    expect(reads[0]).toEqual({ path: '/api/v4/projects/team%2Fproject/merge_requests/7', auth: 't' });
+    expect(requests.every(request => request.auth === 't')).toBe(true);
   });
   test('posts reversed cross-side ranges and converts old-side context to GitHub RIGHT', async () => {
     const { origin, requests } = service(), host: HostConfig = { provider: 'github', baseUrl: origin, token: 't' }, pr = review('github', origin);
@@ -103,6 +112,31 @@ describe('Posting comments', () => {
     await expect(postComment(mr, host, { path, side: 'current', start: 11, end: 11, body: 'x' })).rejects.toThrow('api scope');
     await expect(postComment(mr, host, { path, side: 'current', start: 40, end: 40, body: 'x' })).rejects.toBeInstanceOf(CommentError);
     expect(requests).toHaveLength(1);
+  });
+  test('blocks writes when either provider has new commits', async () => {
+    for (const provider of ['github', 'gitlab'] as Provider[]) {
+      const { origin, requests } = service(201, 'new-head'), pr = review(provider, origin);
+      await expect(postComment(pr, { provider, baseUrl: origin, token: 't' }, { path, side: 'current', start: 11, end: 11, body: 'draft' })).rejects.toThrow('has not been sent');
+      expect(requests).toHaveLength(0);
+    }
+  });
+  test('blocks writes after a base update or GitLab diff version change', async () => {
+    for (const [provider, base, gitlabBase, start] of [
+      ['github', 'new-base', 'base', 'start'], ['gitlab', 'target', 'new-base', 'start'], ['gitlab', 'target', 'base', 'new-start'],
+    ] as const) {
+      const { origin, requests } = service(201, 'head', base, gitlabBase, start), pr = review(provider, origin);
+      pr.targetSha = 'target';
+      await expect(postComment(pr, { provider, baseUrl: origin, token: 't' }, { path, side: 'current', start: 11, end: 11, body: 'draft' })).rejects.toThrow('changed base');
+      expect(requests).toHaveLength(0);
+    }
+  });
+  test('never sends a token to a mismatched review host or provider', async () => {
+    const { origin, reads, requests } = service(), pr = review('github', origin);
+    for (const host of [{ provider: 'gitlab' as const, baseUrl: origin, token: 't' }, { provider: 'github' as const, baseUrl: 'https://other.example', token: 't' }]) {
+      await expect(postComment(pr, host, { path, side: 'current', start: 11, end: 11, body: 'draft' })).rejects.toThrow('Credentials do not match');
+    }
+    expect(reads).toHaveLength(0);
+    expect(requests).toHaveLength(0);
   });
 });
 
