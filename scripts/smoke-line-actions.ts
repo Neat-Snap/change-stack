@@ -6,6 +6,7 @@ import { addDiffAnchors, CommentError, makePatch } from '../src/core/providers';
 import { originDiffUrl } from '../src/core/changes';
 import { parseTarget } from '../src/core/target';
 import type { CommentInput, Provider } from '../src/core/types';
+import { checkSelection } from './check-selection';
 
 // A local handler exercises the real UI and endpoint without sending service comments.
 const browser = await chromium.launch({ headless: true, executablePath: process.env.CHANGE_STACK_CHROMIUM });
@@ -21,6 +22,7 @@ async function drag(page: Page, from: Locator, to: Locator) {
 try {
   await mkdir('dist', { recursive: true });
   for (const provider of ['gitlab', 'github'] as Provider[]) {
+    await checkSelection(browser, provider);
     const session = demoSession(); session.commentsEnabled = true;
     session.review.target = parseTarget(provider === 'gitlab'
       ? 'https://gitlab.example/team/repo/-/merge_requests/7' : 'https://github.com/team/repo/pull/7');

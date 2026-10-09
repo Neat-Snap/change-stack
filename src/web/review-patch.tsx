@@ -42,7 +42,7 @@ export function ReviewPatch(props: ReviewPatchProps) {
 }
 function ReviewPatchContent({ patch, path, theme, layout, lookup, target, splitRatio, onSplitRatioChange, notes }: ReviewPatchProps) {
   const conversation = useConversation();
-  const computed = useMemo(() => {
+  const annotations = useMemo(() => {
     const entries = new Map<string, { side: 'additions' | 'deletions'; lineNumber: number; metadata: { parts: number[]; threads: ReviewThread[] } }>();
     function at(side: 'additions' | 'deletions', lineNumber: number) {
       const key = `${side}:${lineNumber}`;
@@ -57,24 +57,43 @@ function ReviewPatchContent({ patch, path, theme, layout, lookup, target, splitR
     }
     return [...entries.values()];
   }, [conversation.conversation, patch, path, notes]);
-  // Polling replaces conversation data; keep annotations stable so the diff does not re-render and drop a live line selection.
-  const stable = useRef<{ key: string; value: typeof computed }>(undefined);
-  const key = JSON.stringify(computed);
-  if (stable.current?.key !== key) stable.current = { key, value: computed };
-  const annotations = stable.current.value;
   const lookupRef = useRef(lookup); lookupRef.current = lookup;
+  // Own the selection so new annotations cannot erase it. A navigation target
+  // seeds the highlight once; subsequent pointer selections replace it.
+  const targetLines: SelectedLineRange | null = target?.path === path
+    ? { start: target.line, end: target.line, side: target.side === 'old' ? 'deletions' : 'additions' } : null;
+  const [lines, setLines] = useState<{ patch: string; target?: LineTarget; range: SelectedLineRange | null }>(() => ({ patch, target, range: targetLines }));
+  let selectedLines = lines.target !== target ? targetLines : lines.range;
+  if (lines.patch !== patch && selectedLines && (!findDiffLine({ patch } as ChangedFile, selectedLines.start, selectedLines.side === 'deletions' ? 'old' : 'current')
+    || !findDiffLine({ patch } as ChangedFile, selectedLines.end, (selectedLines.endSide ?? selectedLines.side) === 'deletions' ? 'old' : 'current'))) selectedLines = null;
+  const changeLines = useRef((range: SelectedLineRange | null) => {});
+  changeLines.current = range => setLines(previous => previous.patch === patch && previous.target === target && previous.range?.start === range?.start
+    && previous.range?.end === range?.end && previous.range?.side === range?.side && previous.range?.endSide === range?.endSide
+    ? previous : { patch, target, range });
   const [selection, setSelection] = useState<LineSelection>();
-  const wrapper = useRef<HTMLDivElement>(null), pointer = useRef({ x: 0, y: 0, at: 0 }), timer = useRef<ReturnType<typeof setTimeout>>(undefined), draft = useRef(false);
+  const wrapper = useRef<HTMLDivElement>(null), pointer = useRef({ x: 0, y: 0, at: 0 }), timer = useRef<ReturnType<typeof setTimeout>>(undefined), draft = useRef(false), gesture = useRef(false);
   const close = useCallback(() => { clearTimeout(timer.current); pointer.current.at = 0; setSelection(undefined); }, []);
   useEffect(() => {
-    const cancelPending = () => { clearTimeout(timer.current); pointer.current.at = 0; };
+    const cancelPending = () => { clearTimeout(timer.current); pointer.current.at = 0; gesture.current = false; };
+    // Capture before Pierre's document listener, including when the drag ends
+    // over an annotation or outside this patch's bounds.
+    const onUp = (event: PointerEvent) => {
+      if (!gesture.current) return;
+      const rect = wrapper.current?.getBoundingClientRect();
+      if (rect) pointer.current = { x: Math.max(8, Math.min(event.clientX - rect.left - 12, rect.width - 240)),
+        y: Math.max(0, Math.min(event.clientY - rect.top, rect.height)) + 14, at: Date.now() };
+    };
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') cancelPending(); };
     window.addEventListener('pointerdown', cancelPending, true);
+    window.addEventListener('pointerup', onUp, true);
+    window.addEventListener('pointercancel', cancelPending, true);
     window.addEventListener('keydown', onKey);
-    return () => { cancelPending(); window.removeEventListener('pointerdown', cancelPending, true); window.removeEventListener('keydown', onKey); };
+    return () => { cancelPending(); window.removeEventListener('pointerdown', cancelPending, true); window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', cancelPending, true); window.removeEventListener('keydown', onKey); };
   }, []);
-  useEffect(() => { clearTimeout(timer.current); pointer.current.at = 0; }, [patch, target, layout]);
-  // Only pointer selections offer actions; programmatic jumps also select lines.
+  useEffect(() => { clearTimeout(timer.current); pointer.current.at = 0; if (!draft.current) setSelection(undefined); }, [patch, target, layout]);
+  // Only a completed pointer gesture offers actions. Programmatic highlights
+  // also emit onLineSelected, so use onLineSelectionEnd instead.
   const selected = useRef((range: SelectedLineRange | null) => {
     clearTimeout(timer.current);
     if (draft.current) return;
@@ -83,25 +102,24 @@ function ReviewPatchContent({ patch, path, theme, layout, lookup, target, splitR
     const { x, y } = pointer.current;
     timer.current = setTimeout(() => setSelection({ side: range.side === 'deletions' ? 'old' : 'current', endSide: (range.endSide ?? range.side) === 'deletions' ? 'old' : 'current', start: range.start, end: range.end, x, y }), LINE_ACTIONS_DELAY_MS);
   });
+  const options = useMemo(() => ({ theme, themeType: theme.endsWith('dark') ? 'dark' as const : 'light' as const, diffStyle: layout, preferredHighlighter: 'shiki-js' as const,
+    enableLineSelection: true, disableFileHeader: true, hunkSeparators: 'line-info-basic' as const, unsafeCSS: separatorCSS, useTokenTransformer: true,
+    onLineSelectionStart: (range: SelectedLineRange | null) => { gesture.current = true; changeLines.current(range); clearTimeout(timer.current); if (!draft.current) setSelection(undefined); },
+    onLineSelectionChange: (range: SelectedLineRange | null) => changeLines.current(range),
+    onLineSelectionEnd: (range: SelectedLineRange | null) => { changeLines.current(range); selected.current(range); gesture.current = false; },
+    onTokenClick: (token: { tokenText: string }, event: PointerEvent) => {
+      if (event.altKey) { event.preventDefault(); const symbol = token.tokenText.trim(); if (/^[A-Za-z_$][\w$]{1,79}$/.test(symbol)) lookupRef.current(symbol, path); }
+    },
+  }), [theme, layout, path]);
   // Resizing changes inherited CSS only; keep Pierre's rendered patch stable.
   const diff = useMemo(() => (
     <PatchDiff patch={patch} lineAnnotations={annotations}
-      renderAnnotation={annotation => <div onPointerUp={event => event.stopPropagation()}>
+      renderAnnotation={annotation => <div>
         {annotation.metadata.parts.map(index => <PartNote key={index} index={index} part={notes!.parts[index]!} />)}
         {annotation.metadata.threads.map(thread => <ThreadCard key={thread.id} thread={thread} inline />)}
-      </div>} selectedLines={target?.path === path ? { start: target.line, end: target.line, side: target.side === 'old' ? 'deletions' : 'additions' } : undefined}
-      options={{ theme, themeType: theme.endsWith('dark') ? 'dark' : 'light', diffStyle: layout, preferredHighlighter: 'shiki-js',
-        enableLineSelection: true, disableFileHeader: true, hunkSeparators: 'line-info-basic', unsafeCSS: separatorCSS, useTokenTransformer: true,
-        onLineSelected: range => selected.current(range),
-        onTokenClick: (token, event) => {
-          if (event.altKey) { event.preventDefault(); const symbol = token.tokenText.trim(); if (/^[A-Za-z_$][\w$]{1,79}$/.test(symbol)) lookupRef.current(symbol, path); }
-        },
-      }} />
-  ), [patch, target, path, theme, layout, notes, annotations]);
-  return <div ref={wrapper} className="relative" data-testid="patch-pane" onPointerUp={event => {
-    const rect = wrapper.current!.getBoundingClientRect();
-    pointer.current = { x: Math.max(8, Math.min(event.clientX - rect.left - 12, rect.width - 240)), y: event.clientY - rect.top + 14, at: Date.now() };
-  }}>
+      </div>} selectedLines={selectedLines} options={options} />
+  ), [patch, selectedLines, options, notes, annotations]);
+  return <div ref={wrapper} className="relative" data-testid="patch-pane">
     {layout === 'split' && splitRatio !== undefined && onSplitRatioChange && <SplitDivider value={splitRatio} onChange={onSplitRatioChange} path={path} />}
     {diff}
     {selection && <LineActions key={`${selection.side}:${selection.start}:${selection.endSide}:${selection.end}`} path={path} selection={selection} close={close} draft={draft} />}

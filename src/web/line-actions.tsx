@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Check, ExternalLink, MessageSquarePlus, X } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { findDiffRange, originDiffUrl, type LineRange } from '../core/changes';
@@ -19,6 +19,7 @@ export function LineActions({ path, selection, close, draft }: { path: string; s
   const [posting, setPosting] = useState(false), [error, setError] = useState(''), [posted, setPosted] = useState<string>();
   const box = useRef<HTMLDivElement>(null);
   const postingRef = useRef(false);
+  const unavailableId = useId();
   draft.current = !!body.trim() || posting;
   useEffect(() => () => { draft.current = false; }, [draft]);
   useLayoutEffect(() => {
@@ -51,12 +52,15 @@ export function LineActions({ path, selection, close, draft }: { path: string; s
   const service = origin.review.target.provider === 'gitlab' ? 'GitLab' : 'GitHub';
   const located = findDiffRange(file, selection), range = located?.range ?? selection;
   const inDiff = !!located;
+  const unavailable = !origin.commentsEnabled ? 'Commenting is unavailable for this review'
+    : !located ? 'Select a line in the original diff to comment'
+    : !located.sameHunk ? 'Select lines within one diff hunk to comment' : '';
   const pointLabel = (line: number, side: LineRange['side']) => `${side === 'old' ? 'old ' : ''}${line}`;
   const label = range.start === range.end && range.side === (range.endSide ?? range.side)
     ? `line ${pointLabel(range.start, range.side)}`
     : `lines ${pointLabel(range.start, range.side)}–${pointLabel(range.end, range.endSide ?? range.side)}`;
   async function submit() {
-    if (!body.trim() || postingRef.current) return;
+    if (!body.trim() || postingRef.current || unavailable) return;
     postingRef.current = true;
     // Keep Escape owned by this composer while its form controls are disabled.
     box.current?.focus();
@@ -78,11 +82,13 @@ export function LineActions({ path, selection, close, draft }: { path: string; s
       <a href={originDiffUrl(origin.review, file, inDiff ? range : undefined)} target="_blank" rel="noopener noreferrer"
         className="flex h-7 items-center gap-1.5 rounded-sm px-2 hover:bg-accent" title={inDiff ? `Open ${label} in ${service}` : `This line is outside the ${service} diff; opens the file`}>
         <ExternalLink className="size-3.5 text-muted-foreground" />Open in {service}</a>
-      {origin.commentsEnabled && located?.sameHunk && !posted && <button className="flex h-7 items-center gap-1.5 rounded-sm px-2 hover:bg-accent" onClick={() => setComposing(true)}>
+      {!posted && <button disabled={!!unavailable} title={unavailable || `Comment on ${label}`} aria-describedby={unavailable ? unavailableId : undefined}
+        className="flex h-7 items-center gap-1.5 rounded-sm px-2 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50" onClick={() => setComposing(true)}>
         <MessageSquarePlus className="size-3.5 text-muted-foreground" />Comment</button>}
       {posted && <a href={posted} target="_blank" rel="noopener noreferrer" className="flex h-7 items-center gap-1.5 rounded-sm px-2 text-green-700 hover:bg-accent dark:text-green-400">
         <Check className="size-3.5" />Posted · view</a>}
     </div>}
+    {!composing && !posted && unavailable && <p id={unavailableId} className="max-w-72 border-t px-2 py-1.5 text-[11px] text-muted-foreground">{unavailable}</p>}
     {composing && <form className="flex flex-col gap-2 p-2" onSubmit={event => { event.preventDefault(); void submit(); }}>
       <div className="flex items-center gap-2 text-muted-foreground"><span className="min-w-0 flex-1 truncate font-mono text-[11px]">{path} · {label}</span>
         <button type="button" aria-label="Cancel comment" disabled={posting} className="rounded-sm p-0.5 hover:bg-accent disabled:opacity-50" onClick={() => { setComposing(false); setBody(''); setError(''); }}><X className="size-3.5" /></button></div>
