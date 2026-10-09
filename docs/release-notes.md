@@ -1,17 +1,13 @@
-# Change Stack v0.1.6
+# Change Stack v0.1.7
 
-Fixes line selection: dragging across line numbers no longer loses the selection (and its comment popover) when conversations refresh.
+Fixes diff selection and comment actions for GitLab and GitHub.
 
-- Show GitLab and GitHub review threads directly in split/unified diffs, logical layers, and the whole-file panel. Open threads expand; resolved threads start collapsed.
-- Reply, resolve, and reopen threads using your saved Git token. New inline comments immediately appear as threads. Posting failures preserve your draft.
-- Open **Conversation** beside **All changes** for the full discussion, open/resolved filters, general review comments, and new discussions. Long comments and earlier replies expand on demand.
-- Above each diff thread in Conversation, show a code excerpt with the commented lines highlighted. Jump to the full diff or a relevant layer; layer links follow the actual code ranges.
-- Keep outdated threads in Conversation. Show their historical code context when supplied by GitHub, otherwise link to the original review.
-- Refresh conversations every five minutes while the page is visible, when returning to the page, or with the refresh button. Keep reply drafts and previously loaded comments if a refresh fails.
-- Print the underlying diagnostic when Git credential verification fails.
+- Preserve line selections and their actions when conversations refresh, including when comments actually change and while a drag is in progress. Keep open comment drafts through these updates.
+- Complete selections when a drag ends over an inline thread or outside the diff.
+- Allow new selections after jumping from Conversation into the full diff or an individual layer. Navigation highlights do not open comment actions by themselves.
+- Keep the Comment button visible for unsupported selections, disabled with an explanation. Inline comments require lines in one hunk of the original provider diff; expanded context outside that diff cannot anchor an inline comment.
+- Add browser regression checks for both providers in split and unified layouts, alongside the existing posting, draft, and mobile checks.
 
-Conversation refresh preserves the reviewed diff snapshot. If new commits or a changed base appear, reopen the review to load their diff. Replies and resolution changes are published immediately under your account. GitHub general discussions retain GitHub’s flat PR-comment format. Drafts are held only in the current page.
-
-Token permissions are unchanged from v0.1.4: GitLab’s `api` scope, or GitHub **Contents: Read-only** and **Pull requests: Read and write**. Repository permissions still determine which threads you can resolve or reopen.
+Restore CI checks on Ubuntu and macOS, including container checks on Ubuntu. Build the release binary on macOS and publish the GitHub release from Ubuntu. Releases contain only the macOS download and its checksum; container images are not published.
 
 The standalone download is for **macOS Apple Silicon (arm64)** and includes the binary, English/Russian instructions, and license notices. No Bun or Node.js is required. Verify the archive using `SHA256SUMS`. The binary is unsigned and not notarized.
