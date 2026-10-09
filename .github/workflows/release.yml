@@ -42,7 +42,7 @@ jobs:
           if-no-files-found: error
   publish:
     needs: macos
-    runs-on: macos-15
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
