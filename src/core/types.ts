@@ -29,7 +29,7 @@ export interface AIConfig {
   jsonMode?: boolean;
   reasoningEnabled?: boolean;
 }
-export interface Config { version: 1; hosts: Record<string, HostConfig>; ai?: AIConfig; aiSetupSkipped?: boolean; defaultLanguage?: 'en' | 'ru' }
+export interface Config { version: 1; hosts: Record<string, HostConfig>; ai?: AIConfig; aiSetupSkipped?: boolean; defaultLanguage?: 'en' | 'ru'; modelDefaultsVersion?: number }
 export interface ChangedFile {
   path: string;
   oldPath: string;

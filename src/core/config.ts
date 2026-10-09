@@ -2,6 +2,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DEFAULT_SYSTEM_PROMPT } from './analysis';
+import { MODEL_DEFAULTS_VERSION, withModelDefaults } from './model-defaults';
 import type { Config } from './types';
 
 export function configPath(): string {
@@ -23,15 +24,22 @@ async function readConfig(path: string): Promise<Config | undefined> {
 
 export async function loadConfig(path = configPath()): Promise<Config> {
   let config = await readConfig(path);
+  let persist = false;
   // Migrate the previous default location once; leave its original file intact.
   if (!config && path === configPath() && !process.env.CHANGE_STACK_CONFIG) {
     config = await readConfig(join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'change-stack', 'config.json'));
     if (config) {
       config.defaultLanguage ??= config.ai?.language ?? 'en';
-      await saveConfig(config, path);
+      persist = true;
     }
   }
   if (!config) return { version: 1, hosts: {} };
+  if (config.ai && config.modelDefaultsVersion !== MODEL_DEFAULTS_VERSION) {
+    config.ai = withModelDefaults(config.ai);
+    config.modelDefaultsVersion = MODEL_DEFAULTS_VERSION;
+    persist = true;
+  }
+  if (persist) await saveConfig(config, path);
   if (config.ai) {
     await ensurePrompt(config, path);
     const prompt = await readFile(promptPath(path), 'utf8');
@@ -52,6 +60,7 @@ export async function saveConfig(config: Config, path = configPath()): Promise<v
   await ensurePrompt(config, path);
   const stored: Config = { ...config, defaultLanguage: config.defaultLanguage ?? config.ai?.language ?? 'en',
     ai: config.ai ? { ...config.ai } : undefined };
+  if (stored.ai) stored.modelDefaultsVersion = MODEL_DEFAULTS_VERSION;
   if (stored.ai) { delete stored.ai.systemPrompt; delete stored.ai.language; }
   const temp = `${path}.${crypto.randomUUID()}.tmp`;
   await writeFile(temp, JSON.stringify(stored, null, 2) + '\n', { mode: 0o600, flag: 'wx' });

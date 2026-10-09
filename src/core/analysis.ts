@@ -3,10 +3,11 @@ import { serviceJson } from './network';
 import { serviceUrl } from './target';
 import { diagnose, diagnosticReason, ModelError } from './diagnostics';
 import { retryModelRequest, serialModelRequest } from './model-requests';
+import { MODEL_DEFAULTS } from './model-defaults';
 import type { RepositoryReader, RepositoryRequest } from './repository';
 import type { AIConfig, Analysis, Layer, LayerGroup, LayerPart, Review } from './types';
 
-const MAX_CONTEXT = 48_000;
+const MAX_CONTEXT = MODEL_DEFAULTS.maxContextChars;
 export const DEFAULT_SYSTEM_PROMPT = `Help a teammate understand a code change. Use simple, everyday language and short sentences. Explain what changed, why it matters, and what the reviewer should check. Avoid jargon, formal phrasing, and implementation details unless they are needed to understand the change. Explain only what the evidence supports. Clearly say when context is missing. Never claim a change is safe to merge.`;
 
 export function systemPrompt(ai: AIConfig): string {
@@ -92,7 +93,7 @@ let modelRequestNumber = 0;
 export async function complete(ai: AIConfig, user: string, json = false, onProgress?: (message: string) => void): Promise<string> {
   const inputLimit = bounded(ai.maxContextChars, MAX_CONTEXT, 8_000, 200_000);
   const outputLimit = ai.maxOutputTokens === undefined || ai.maxOutputTokens === 0 ? undefined : bounded(ai.maxOutputTokens, 3000, 1_000, 32_000);
-  const timeoutMs = bounded(ai.timeoutMs, ai.serviceTier === 'flex' ? 600_000 : 120_000, 1_000, 600_000);
+  const timeoutMs = bounded(ai.timeoutMs, MODEL_DEFAULTS.timeoutMs, 1_000, 600_000);
   const base = serviceUrl(ai.baseUrl).toString().replace(/\/$/, '');
   const openRouter = new URL(base).hostname === 'openrouter.ai';
   const extra = { ...ai.extraBody };
@@ -107,7 +108,7 @@ export async function complete(ai: AIConfig, user: string, json = false, onProgr
       else delete extra.chat_template_kwargs;
     }
   }
-  const effort = ai.reasoningEnabled === false ? undefined : ai.reasoningEffort;
+  const effort = ai.reasoningEnabled === false ? undefined : ai.reasoningEffort ?? MODEL_DEFAULTS.reasoningEffort;
   const stage = `model.request.${++modelRequestNumber}`;
   const queueKey = JSON.stringify([new URL(base).origin, ai.apiKey]);
   return serialModelRequest(queueKey, async () => {

@@ -38,6 +38,8 @@ cstack --help                           # all options
 
 On first run, the CLI asks for a Git token that can read reviews and post comments and your model's base URL, model ID, and API key. Keep the terminal open while reviewing; `Ctrl+C` stops the local server.
 
+Model requests default to **high** reasoning, a **600-second** timeout, and **30,000 input characters** per call. Upgrading to v0.1.8 replaces these three saved values once, including values previously imported from other settings. New setup and imports use the same defaults. Other model settings and credentials are retained; `--model-timeout`, `--max-context-chars`, and `--no-reasoning` still override the current run.
+
 Use the same token for reading and commenting:
 
 - **GitLab:** choose the `api` scope. The setup link preselects it. GitLab does not offer a comment-only token scope; `api` grants API access within your account's existing permissions.

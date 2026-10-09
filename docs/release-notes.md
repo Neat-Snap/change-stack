@@ -1,13 +1,10 @@
-# Change Stack v0.1.7
+# Change Stack v0.1.8
 
-Fixes diff selection and comment actions for GitLab and GitHub.
+Use high reasoning, a 600-second model request timeout, and 30,000 input characters per call by default.
 
-- Preserve line selections and their actions when conversations refresh, including when comments actually change and while a drag is in progress. Keep open comment drafts through these updates.
-- Complete selections when a drag ends over an inline thread or outside the diff.
-- Allow new selections after jumping from Conversation into the full diff or an individual layer. Navigation highlights do not open comment actions by themselves.
-- Keep the Comment button visible for unsupported selections, disabled with an explanation. Inline comments require lines in one hunk of the original provider diff; expanded context outside that diff cannot anchor an inline comment.
-- Add browser regression checks for both providers in split and unified layouts, alongside the existing posting, draft, and mobile checks.
-
-Restore CI checks on Ubuntu and macOS, including container checks on Ubuntu. Build the release binary on macOS and publish the GitHub release from Ubuntu. Releases contain only the macOS download and its checksum; container images are not published.
+- On the first run after upgrading, replace these three saved model values once, including values previously imported from other settings. Preserve model identity, endpoint, credentials, custom prompts, and other generation options.
+- Apply the same defaults during new setup and imports, including imported reasoning options in the request body.
+- Keep command-line timeout/context overrides and `--no-reasoning` available. Settings changed after migration remain saved.
+- Add regression checks for migration, imported values, outgoing requests, and command-line overrides.
 
 The standalone download is for **macOS Apple Silicon (arm64)** and includes the binary, English/Russian instructions, and license notices. No Bun or Node.js is required. Verify the archive using `SHA256SUMS`. The binary is unsigned and not notarized.
